@@ -75,8 +75,7 @@ class MainWindow(QMainWindow):
         self.logger.info("Инициализация главного окна приложения")
         
         self.setWindowTitle(_("app_title"))
-        self.setMinimumSize(QSize(600, 400))
-        
+        self.setMinimumSize(QSize(600, 460))  # Увеличена высота на 15% (400 -> 460)
         self.setup_ui()
         self.setup_connections()
     
@@ -158,20 +157,26 @@ class MainWindow(QMainWindow):
     def setup_general_tab(self):
         """Настройка вкладки 'Общие'"""
         layout = QVBoxLayout(self.general_tab)
-        layout.setSpacing(15)
+        layout.setSpacing(12)  # Унифицированный интервал
+        layout.setContentsMargins(15, 15, 15, 15)  # Унифицированные отступы
         
-        # URL видео
+        # URL видео - унифицированная высота
         url_layout = QHBoxLayout()
         url_label = QLabel(_("url_label"))
+        url_label.setFixedWidth(120)  # Фиксированная ширина лейбла
+        url_label.setFixedHeight(30)  # Фиксированная высота лейбла
         self.url_input = QLineEdit()
         self.url_input.setPlaceholderText("Вставьте URL видео для загрузки")
+        self.url_input.setFixedHeight(30)  # Фиксированная высота поля ввода
         url_layout.addWidget(url_label)
         url_layout.addWidget(self.url_input)
         layout.addLayout(url_layout)
         
-        # Выбор формата
+        # Выбор формата - унифицированная высота
         format_layout = QHBoxLayout()
         format_label = QLabel(_("format_label"))
+        format_label.setFixedWidth(120)  # Фиксированная ширина лейбла
+        format_label.setFixedHeight(30)  # Фиксированная высота лейбла
         self.format_combo = QComboBox()
         self.format_combo.addItem(_("format_best"), "best")
         self.format_combo.addItem(_("format_1080p"), "1080")
@@ -179,20 +184,24 @@ class MainWindow(QMainWindow):
         self.format_combo.addItem(_("format_480p"), "480")
         self.format_combo.addItem(_("format_mp3"), "mp3")
         self.format_combo.addItem("Только аудио (M4A)", "m4a")
+        self.format_combo.setFixedHeight(30)  # Фиксированная высота комбобокса
         format_layout.addWidget(format_label)
         format_layout.addWidget(self.format_combo)
         layout.addLayout(format_layout)
         
-        # Выбор кодека (AV1/H.264)
+        # Выбор кодека (AV1/H.264) - унифицированная высота
         codec_layout = QHBoxLayout()
         codec_label = QLabel("Кодек видео:")
+        codec_label.setFixedWidth(120)  # Фиксированная ширина лейбла
+        codec_label.setFixedHeight(30)  # Фиксированная высота лейбла
         self.codec_combo = QComboBox()
         self.codec_combo.addItem("H.264 (совместимость)", "h264")
         self.codec_combo.addItem("AV1 (лучшее качество)", "av1")
+        self.codec_combo.setFixedHeight(30)  # Фиксированная высота комбобокса
         
         # Добавляем кнопку с вопросительным знаком для подсказки
         self.codec_help_button = QPushButton("?")
-        self.codec_help_button.setFixedSize(20, 20)
+        self.codec_help_button.setFixedSize(30, 30)  # Унифицированный размер кнопки помощи
         self.codec_help_button.setToolTip("H.264: Лучшая совместимость с устройствами\nAV1: Лучшее качество при меньшем размере файла, но может не поддерживаться старыми устройствами")
         self.codec_help_button.clicked.connect(self.show_codec_help)
         
@@ -201,38 +210,73 @@ class MainWindow(QMainWindow):
         codec_layout.addWidget(self.codec_help_button)
         layout.addLayout(codec_layout)
         
-        # Выбор директории для сохранения
+        # Выбор директории для сохранения - унифицированная высота
         save_layout = QHBoxLayout()
         save_label = QLabel(_("save_path_label"))
+        save_label.setFixedWidth(120)  # Фиксированная ширина лейбла
+        save_label.setFixedHeight(30)  # Фиксированная высота лейбла
         self.save_path_input = QLineEdit()
         self.save_path_input.setReadOnly(True)
+        self.save_path_input.setFixedHeight(30)  # Фиксированная высота поля ввода
         self.browse_button = QPushButton(_("browse_button"))
+        self.browse_button.setFixedHeight(30)  # Фиксированная высота кнопки
+        self.browse_button.setFixedWidth(100)  # Фиксированная ширина кнопки
         save_layout.addWidget(save_label)
         save_layout.addWidget(self.save_path_input)
         save_layout.addWidget(self.browse_button)
         layout.addLayout(save_layout)
         
-        # Кнопка загрузки
+        # Добавляем растягивающийся пробел для выравнивания кнопки загрузки внизу
+        layout.addStretch()
+        
+        # Кнопка загрузки - унифицированный стиль и позиционирование
+        download_layout = QHBoxLayout()
+        download_layout.addStretch()
         self.download_button = QPushButton(_("download_button"))
-        self.download_button.setStyleSheet("font-size: 16px; padding: 8px;")
-        layout.addWidget(self.download_button)
+        self.download_button.setStyleSheet("""
+            QPushButton {
+                font-size: 14px; 
+                font-weight: bold;
+                padding: 10px 20px; 
+                background-color: #007acc;
+                color: white;
+                border: none;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #005a9e;
+            }
+            QPushButton:pressed {
+                background-color: #004578;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+                color: #666666;
+            }
+        """)
+        self.download_button.setFixedHeight(40)  # Фиксированная высота кнопки
+        self.download_button.setFixedWidth(160)  # Фиксированная ширина кнопки
+        download_layout.addWidget(self.download_button)
+        download_layout.addStretch()
+        layout.addLayout(download_layout)
         
     def setup_kinescope_tab(self):
         """Настройка вкладки 'Kinescope'"""
         layout = QVBoxLayout(self.kinescope_tab)
-        layout.setSpacing(15)
+        layout.setSpacing(12)  # Унифицированный интервал - точно как в General
+        layout.setContentsMargins(15, 15, 15, 15)  # Унифицированные отступы - точно как в General
         
-        # Область для перетаскивания файла (размещаем сверху)
+        # Область для перетаскивания файла (размещаем сверху) - фиксированная высота
         self.drop_area = QFrame()
         self.drop_area.setFrameShape(QFrame.StyledPanel)
         self.drop_area.setFrameShadow(QFrame.Sunken)
-        self.drop_area.setMinimumHeight(120)
+        self.drop_area.setFixedHeight(80)  # Уменьшенная высота для предотвращения наложений
         self.drop_area.setAcceptDrops(True)
         self.drop_area.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.drop_area.setStyleSheet("""
             QFrame {
                 border: 2px dashed #aaa;
-                border-radius: 10px;
+                border-radius: 8px;
                 background-color: #f9f9f9;
             }
             QFrame:hover {
@@ -242,104 +286,130 @@ class MainWindow(QMainWindow):
         """)
         
         drop_layout = QVBoxLayout(self.drop_area)
+        drop_layout.setContentsMargins(10, 10, 10, 10)
         self.drop_label = QLabel(_("drag_drop_hint"))
         self.drop_label.setAlignment(Qt.AlignCenter)
-        self.drop_label.setStyleSheet("color: #666; font-size: 14px;")
+        self.drop_label.setStyleSheet("color: #666; font-size: 12px; font-weight: 500;")
+        self.drop_label.setFixedHeight(20)  # Уменьшенная высота для лейбла
         drop_layout.addWidget(self.drop_label)
         
         layout.addWidget(self.drop_area)
         
-        # Кнопка для выбора файла (размещаем под областью drag and drop)
-        # Удалено по требованию: кнопка выбора файла больше не отображается
-        # button_layout = QHBoxLayout()
-        # button_layout.addStretch()
-        # self.select_json_button = QPushButton(_("select_file_button"))
-        # self.select_json_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        # self.select_json_button.setStyleSheet("padding: 8px 20px; font-size: 14px;")
-        # button_layout.addWidget(self.select_json_button)
-        # button_layout.addStretch()
-        # layout.addLayout(button_layout)
-        
-        # Информация о загруженном файле
+        # Информация о загруженном файле - фиксированная высота
         self.json_info_label = QLabel("")
         self.json_info_label.setWordWrap(True)
         self.json_info_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        self.json_info_label.setMinimumHeight(20)
-        self.json_info_label.setStyleSheet("color: #007acc; font-weight: bold; margin: 5px 0;")
+        self.json_info_label.setFixedHeight(20)  # Уменьшенная высота
+        self.json_info_label.setStyleSheet("color: #007acc; font-weight: bold; margin: 3px 0; font-size: 11px;")
         layout.addWidget(self.json_info_label)
         
-        # Разделитель
+        # Разделитель - фиксированная высота
         separator = QFrame()
         separator.setFrameShape(QFrame.HLine)
         separator.setFrameShadow(QFrame.Sunken)
+        separator.setFixedHeight(2)  # Фиксированная высота
         layout.addWidget(separator)
         
-        # Поля для ввода данных (объединенный интерфейс)
-        fields_layout = QVBoxLayout()
-        fields_layout.setSpacing(15)  # Аналогично вкладке "Общие"
-        
-        # Referrer
+        # Referrer - точно такие же настройки как в General
         referrer_layout = QHBoxLayout()
         referrer_label = QLabel(_("referrer_label"))
+        referrer_label.setFixedWidth(120)  # Фиксированная ширина лейбла - как в General
+        referrer_label.setFixedHeight(30)  # Фиксированная высота лейбла - как в General
         self.referrer_input = QLineEdit()
         self.referrer_input.setPlaceholderText("https://...")
+        self.referrer_input.setFixedHeight(30)  # Фиксированная высота поля ввода - как в General
         referrer_layout.addWidget(referrer_label)
         referrer_layout.addWidget(self.referrer_input)
-        fields_layout.addLayout(referrer_layout)
+        layout.addLayout(referrer_layout)
         
-        # URL видео
+        # URL видео - точно такие же настройки как в General
         video_url_layout = QHBoxLayout()
         video_url_label = QLabel(_("video_url_label"))
+        video_url_label.setFixedWidth(120)  # Фиксированная ширина лейбла - как в General
+        video_url_label.setFixedHeight(30)  # Фиксированная высота лейбла - как в General
         self.kinescope_url_input = QLineEdit()
         self.kinescope_url_input.setPlaceholderText("https://kinescope.io/... или прямая ссылка на .m3u8")
+        self.kinescope_url_input.setFixedHeight(30)  # Фиксированная высота поля ввода - как в General
         video_url_layout.addWidget(video_url_label)
         video_url_layout.addWidget(self.kinescope_url_input)
-        fields_layout.addLayout(video_url_layout)
+        layout.addLayout(video_url_layout)
         
-        # Имя файла
+        # Имя файла - точно такие же настройки как в General
         filename_layout = QHBoxLayout()
         filename_label = QLabel(_("filename_label"))
+        filename_label.setFixedWidth(120)  # Фиксированная ширина лейбла - как в General
+        filename_label.setFixedHeight(30)  # Фиксированная высота лейбла - как в General
         self.filename_input = QLineEdit()
         self.filename_input.setPlaceholderText("video_name")
+        self.filename_input.setFixedHeight(30)  # Фиксированная высота поля ввода - как в General
         filename_layout.addWidget(filename_label)
         filename_layout.addWidget(self.filename_input)
-        fields_layout.addLayout(filename_layout)
+        layout.addLayout(filename_layout)
         
-        # Кодек с помощью
+        # Кодек с помощью - точно такие же настройки как в General
         codec_layout = QHBoxLayout()
         codec_label = QLabel(_("codec_label"))
+        codec_label.setFixedWidth(120)  # Фиксированная ширина лейбла - как в General
+        codec_label.setFixedHeight(30)  # Фиксированная высота лейбла - как в General
         self.kinescope_codec_combo = QComboBox()
         self.kinescope_codec_combo.addItems(["h264", "h265"])
         self.kinescope_codec_combo.setCurrentText("h264")
+        self.kinescope_codec_combo.setFixedHeight(30)  # Фиксированная высота комбобокса - как в General
         self.kinescope_codec_help_button = QPushButton("?")
-        self.kinescope_codec_help_button.setFixedSize(20, 20)  # Аналогично вкладке "Общие"
+        self.kinescope_codec_help_button.setFixedSize(30, 30)  # Унифицированный размер кнопки помощи - как в General
         self.kinescope_codec_help_button.setToolTip(_("codec_help"))
         codec_layout.addWidget(codec_label)
         codec_layout.addWidget(self.kinescope_codec_combo)
         codec_layout.addWidget(self.kinescope_codec_help_button)
-        fields_layout.addLayout(codec_layout)
+        layout.addLayout(codec_layout)
         
-        layout.addLayout(fields_layout)
-        
-        # Выбор директории для сохранения
+        # Выбор директории для сохранения - точно такие же настройки как в General
         save_layout = QHBoxLayout()
         save_label = QLabel(_("save_path_label"))
+        save_label.setFixedWidth(120)  # Фиксированная ширина лейбла - как в General
+        save_label.setFixedHeight(30)  # Фиксированная высота лейбла - как в General
         self.kinescope_save_path_input = QLineEdit()
         self.kinescope_save_path_input.setReadOnly(True)
+        self.kinescope_save_path_input.setFixedHeight(30)  # Фиксированная высота поля ввода - как в General
         self.kinescope_save_path_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.kinescope_browse_button = QPushButton(_("browse_button"))
+        self.kinescope_browse_button.setFixedHeight(30)  # Фиксированная высота кнопки - как в General
+        self.kinescope_browse_button.setFixedWidth(100)  # Фиксированная ширина кнопки - как в General
         save_layout.addWidget(save_label)
         save_layout.addWidget(self.kinescope_save_path_input)
         save_layout.addWidget(self.kinescope_browse_button)
         layout.addLayout(save_layout)
         
-        # Кнопка загрузки
+        # Добавляем растягивающийся пробел для выравнивания кнопки загрузки внизу - как в General
+        layout.addStretch()
+        
+        # Кнопка загрузки - унифицированный стиль и позиционирование - точно как в General
         download_layout = QHBoxLayout()
         download_layout.addStretch()
         self.kinescope_download_button = QPushButton(_("download_button"))
-        self.kinescope_download_button.setStyleSheet("font-size: 16px; padding: 8px; margin-top: 10px;")
-        self.kinescope_download_button.setFixedHeight(40)
-        self.kinescope_download_button.setMinimumWidth(160)
+        self.kinescope_download_button.setStyleSheet("""
+            QPushButton {
+                font-size: 14px; 
+                font-weight: bold;
+                padding: 10px 20px; 
+                background-color: #007acc;
+                color: white;
+                border: none;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #005a9e;
+            }
+            QPushButton:pressed {
+                background-color: #004578;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+                color: #666666;
+            }
+        """)
+        self.kinescope_download_button.setFixedHeight(40)  # Фиксированная высота кнопки - как в General
+        self.kinescope_download_button.setFixedWidth(160)  # Фиксированная ширина кнопки - как в General
         download_layout.addWidget(self.kinescope_download_button)
         download_layout.addStretch()
         layout.addLayout(download_layout)
