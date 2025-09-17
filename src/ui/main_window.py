@@ -76,8 +76,16 @@ class MainWindow(QMainWindow):
         
         self.setWindowTitle(_("app_title"))
         self.setMinimumSize(QSize(600, 460))  # Увеличена высота на 15% (400 -> 460)
+        self.resize(1000, 700)
+        
+        # Загружаем иконку
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "resources", "icon.ico")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+        
         self.setup_ui()
         self.setup_connections()
+        self.logger.info("Главное окно успешно инициализировано")
     
     def setup_ui(self):
         """Настройка пользовательского интерфейса"""
@@ -478,14 +486,17 @@ AV1:
     def change_language(self, index):
         lang_code = self.lang_combo.itemData(index)
         if lang_code:
+            self.logger.info(f"Попытка смены языка на: {lang_code}")
             localization = get_localization()
             if localization.set_language(lang_code):
+                self.logger.info(f"Язык успешно изменен на: {lang_code}")
                 QMessageBox.information(
                     self,
                     _("dialog_title_info"),
                     _("language_changed"),
                 )
                 # Правильный перезапуск приложения
+                self.logger.info("Перезапуск приложения для применения нового языка")
                 QApplication.instance().quit()
                 # Получаем путь к main.py в корне проекта
                 import __main__
@@ -496,6 +507,7 @@ AV1:
                     main_script = os.path.abspath(sys.argv[0])
                 QProcess.startDetached(sys.executable, [main_script])
             else:
+                self.logger.error(f"Ошибка при смене языка на: {lang_code}")
                 QMessageBox.critical(
                     self,
                     _("dialog_title_error"),
@@ -736,6 +748,8 @@ AV1:
         video_url = self.kinescope_url_input.text().strip()
         filename = self.filename_input.text().strip()
         output_path = self.kinescope_save_path_input.text().strip()
+        
+        self.logger.info(f"Начало загрузки Kinescope: URL={video_url}, Referrer={referrer}, Filename={filename}, Path={output_path}")
         codec = self.codec_combo.currentText()
         
         # Проверяем обязательные поля
@@ -792,13 +806,16 @@ AV1:
         self.progress_label.setText(message)
         self.statusBar.showMessage(message)
         if success:
+            self.logger.info(f"Загрузка успешно завершена: {message}")
             QMessageBox.information(self, _("dialog_title_info"), message)
         else:
+            self.logger.error(f"Загрузка завершена с ошибкой: {message}")
             QMessageBox.critical(self, _("dialog_title_error"), message)
             
     @Slot(str)
     def download_error(self, message):
         """Обрабатывает ошибки загрузки"""
+        self.logger.error(f"Ошибка во время загрузки: {message}")
         self.set_ui_enabled(True)
         self.progress_label.setText(message)
         self.statusBar.showMessage(message)

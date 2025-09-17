@@ -19,19 +19,41 @@ def clean_build_artifacts():
     for dir_name in dirs_to_clean:
         if os.path.exists(dir_name):
             print(f"Удаление директории {dir_name}...")
-            shutil.rmtree(dir_name)
+            try:
+                # Сначала пробуем удалить исполняемый файл, если он существует
+                if dir_name == "dist":
+                    exe_path = os.path.join(dir_name, "KSPVideoDownloader.exe")
+                    if os.path.exists(exe_path):
+                        try:
+                            os.chmod(exe_path, 0o777)  # Даем полные права на файл
+                            os.unlink(exe_path)
+                            print(f"Удален файл {exe_path}")
+                        except Exception as e:
+                            print(f"Предупреждение: Не удалось удалить {exe_path}: {e}")
+                            print("Попробуйте закрыть все экземпляры приложения и повторить сборку.")
+                
+                # Удаляем директорию
+                shutil.rmtree(dir_name, ignore_errors=True)
+            except Exception as e:
+                print(f"Предупреждение: Не удалось полностью удалить {dir_name}: {e}")
     
     # Удаление .spec файлов
     spec_files = list(Path(".").glob("*.spec"))
     for spec_file in spec_files:
-        print(f"Удаление файла спецификации {spec_file}...")
-        spec_file.unlink()
+        try:
+            print(f"Удаление файла спецификации {spec_file}...")
+            spec_file.unlink(missing_ok=True)
+        except Exception as e:
+            print(f"Предупреждение: Не удалось удалить {spec_file}: {e}")
     
     # Удаление __pycache__ директорий
     pycache_dirs = list(Path(".").rglob("__pycache__"))
     for pycache_dir in pycache_dirs:
-        print(f"Удаление кэша Python {pycache_dir}...")
-        shutil.rmtree(pycache_dir)
+        try:
+            print(f"Удаление кэша Python {pycache_dir}...")
+            shutil.rmtree(pycache_dir, ignore_errors=True)
+        except Exception as e:
+            print(f"Предупреждение: Не удалось удалить {pycache_dir}: {e}")
     
     print("Очистка завершена.")
 
@@ -130,6 +152,28 @@ def build_app():
         "--noconfirm", # Не запрашивать подтверждение
         "--optimize", "2",  # Оптимизация байт-кода
         "--strip",     # Удаление отладочной информации (только для Linux/macOS)
+        # Использование runtime-hook для исправления SSL
+        "--runtime-hook=ssl_hook.py",
+        # Явное включение необходимых модулей
+        "--hidden-import=ssl",
+        "--hidden-import=_ssl",
+        "--hidden-import=cryptography",
+        "--hidden-import=certifi",
+        "--hidden-import=idna",
+        "--hidden-import=urllib3",
+        "--hidden-import=charset_normalizer",
+        "--hidden-import=unicodedata",
+        # Отключение оптимизаций, которые могут вызывать проблемы с DLL
+        "--noupx",
+        # Включение всех бинарных зависимостей
+        "--collect-all", "yt_dlp",
+        "--collect-all", "certifi",
+        # Добавление бинарных файлов SSL
+        "--add-binary", f"{sys.prefix}\\DLLs\\_ssl.pyd;.",
+        "--add-binary", f"{sys.prefix}\\DLLs\\_socket.pyd;.",
+        # Добавление SSL DLL файлов
+        "--add-binary", f"{sys.prefix}\\Library\\bin\\libssl*.dll;.",
+        "--add-binary", f"{sys.prefix}\\Library\\bin\\libcrypto*.dll;.",
         "src/main.py"
     ]
     

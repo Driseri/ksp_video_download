@@ -2,9 +2,20 @@
 # -*- coding: utf-8 -*-
 
 import os
+import sys
 import logging
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
+
+
+def get_executable_dir():
+    """Получает директорию исполняемого файла или скрипта"""
+    if getattr(sys, 'frozen', False):
+        # Если приложение собрано в exe
+        return os.path.dirname(sys.executable)
+    else:
+        # Если запускается как скрипт
+        return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 class Logger:
@@ -24,11 +35,8 @@ class Logger:
         if self.logger.handlers:
             return
         
-        # Создаем директорию для логов, если она не существует
-        logs_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-            'logs'
-        )
+        # Создаем директорию для логов в папке с исполняемым файлом
+        logs_dir = os.path.join(get_executable_dir(), 'logs')
         if not os.path.exists(logs_dir):
             os.makedirs(logs_dir, exist_ok=True)
         
