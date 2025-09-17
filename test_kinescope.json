@@ -1,0 +1,18 @@
+{
+  "referrer": "https://kinescope.io/embed/123456789",
+  "video_data": {
+    "title": "Тестовое видео",
+    "duration": 1800,
+    "formats": {
+      "hls": {
+        "url": "https://example.com/video/playlist.m3u8",
+        "quality": "1080p"
+      }
+    }
+  },
+  "shakahls": "https://example.com/video/master.m3u8",
+  "metadata": {
+    "created_at": "2025-01-17T21:20:00Z",
+    "author": "Test Author"
+  }
+}
