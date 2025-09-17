@@ -121,19 +121,19 @@ class VideoDownloader:
             }
         elif format_option == "720":
             return {
-                'format': f'bestvideo[height<=720][vcodec*={video_codec}]+bestaudio/best[height<=720]/best',
+                'format': f'bestvideo[height<=720][vcodec*={video_codec}]+bestaudio/best[height<=720]/bestvideo[height<=720]+bestaudio/best',
             }
         elif format_option == "1080":
             return {
-                'format': f'bestvideo[height<=1080][vcodec*={video_codec}]+bestaudio/best[height<=1080]/best',
+                'format': f'bestvideo[height<=1080][vcodec*={video_codec}]+bestaudio/best[height<=1080]/bestvideo[height<=1080]+bestaudio/best',
             }
         elif format_option == "480":
             return {
-                'format': f'bestvideo[height<=480][vcodec*={video_codec}]+bestaudio/best[height<=480]/best',
+                'format': f'bestvideo[height<=480][vcodec*={video_codec}]+bestaudio/best[height<=480]/bestvideo[height<=480]+bestaudio/best',
             }
         else:  # best
             return {
-                'format': f'bestvideo[vcodec*={video_codec}]+bestaudio/best',
+                'format': f'bestvideo[vcodec*={video_codec}]+bestaudio/bestvideo+bestaudio/best',
             }
     
     def download(self, url: str, output_path: str, format_option: str, 
@@ -201,7 +201,37 @@ class VideoDownloader:
                     error_msg = "Не удалось получить информацию о видео"
                     self.logger.error(error_msg)
                     raise Exception(_("error_no_video_info"))
-        except Exception as e:
-            error_msg = f"Ошибка при загрузке видео: {str(e)}"
+        except yt_dlp.utils.ExtractorError as e:
+            error_msg = f"Ошибка экстрактора при загрузке видео: {str(e)}"
             self.logger.error(error_msg, exc_info=True)
-            raise Exception(_("error_download_failed").format(error=str(e)))
+            # Проверяем, если это ошибка формата, пробуем с базовым форматом
+            if "Requested format is not available" in str(e):
+                self.logger.warning("Попытка загрузки с базовым форматом...")
+                try:
+                    # Пробуем с простым форматом best
+                    ydl_opts_fallback = ydl_opts.copy()
+                    ydl_opts_fallback['format'] = 'best'
+                    
+                    with yt_dlp.YoutubeDL(ydl_opts_fallback) as ydl:
+                        info = ydl.extract_info(url, download=True)
+                        if info:
+                            filename = ydl.prepare_filename(info)
+                            if 'ext' in info and not filename.endswith(info['ext']):
+                                base_filename = os.path.splitext(filename)[0]
+                                filename = f"{base_filename}.{info['ext']}"
+                            
+                            result_file = os.path.join(output_path, os.path.basename(filename))
+                            self.logger.info(f"Загрузка завершена успешно (fallback): {result_file}")
+                            return result_file
+                except Exception as fallback_e:
+                    self.logger.error(f"Fallback загрузка также не удалась: {str(fallback_e)}")
+            
+            raise Exception(_("error_download_failed"))
+        except yt_dlp.utils.DownloadError as e:
+            error_msg = f"Ошибка загрузки: {str(e)}"
+            self.logger.error(error_msg, exc_info=True)
+            raise Exception(_("error_download_failed"))
+        except Exception as e:
+            error_msg = f"Неожиданная ошибка при загрузке видео: {str(e)}"
+            self.logger.error(error_msg, exc_info=True)
+            raise Exception(_("error_download_failed"))
