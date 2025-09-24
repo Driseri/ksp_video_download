@@ -23,6 +23,8 @@ RESTART_CODE = 1000
 from src.core.downloader import VideoDownloader
 from src.core.logger import get_logger
 from src.core.localization import get_localization, _
+from src.ui.audio_video_tab import AudioVideoTab
+from src.ui.conversion_tab import ConversionTab
 
 
 class DownloadWorker(QThread):
@@ -136,6 +138,14 @@ class MainWindow(QMainWindow):
         self.kinescope_tab = QWidget()
         self.setup_kinescope_tab()
         self.tab_widget.addTab(self.kinescope_tab, _("kinescope_tab"))
+        
+        # Вкладка "Разделение аудио/видео"
+        self.audio_video_tab = AudioVideoTab()
+        self.tab_widget.addTab(self.audio_video_tab, _("audio_video_tab"))
+        
+        # Вкладка "Перекодировка файлов"
+        self.conversion_tab = ConversionTab()
+        self.tab_widget.addTab(self.conversion_tab, _("conversion_tab"))
         
         main_layout.addWidget(self.tab_widget)
         
@@ -447,6 +457,10 @@ class MainWindow(QMainWindow):
         self.drop_area.dragEnterEvent = self.dragEnterEvent
         self.drop_area.dropEvent = self.dropEvent
         self.drop_area.mousePressEvent = self.drop_area_clicked
+        
+        # Подключение сигналов новых вкладок к прогресс-бару
+        self.audio_video_tab.progress_updated = self.update_progress
+        self.conversion_tab.progress_updated = self.update_progress
     
     def browse_save_location(self):
         """Открывает диалог выбора директории для сохранения"""
@@ -600,7 +614,7 @@ AV1:
     def select_json_file(self):
         """Выбор JSON файла для Kinescope"""
         from core.localization import _
-        file_path, _ = QFileDialog.getOpenFileName(
+        file_path, filter_used = QFileDialog.getOpenFileName(
             self, 
             _("dialog_title_browse"), 
             "", 
