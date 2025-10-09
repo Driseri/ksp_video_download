@@ -9,13 +9,16 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QLabel, QLineEdit, QPushButton, QComboBox, 
     QProgressBar, QFileDialog, QMessageBox, QStatusBar,
-    QTabWidget, QRadioButton, QButtonGroup, QFrame, QApplication, QSizePolicy
+    QTabWidget, QRadioButton, QButtonGroup, QFrame, QApplication, QSizePolicy,
+    QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox
 )
 from PySide6.QtCore import Qt, QSize, Signal, Slot, QThread, QMimeData, QProcess, QPropertyAnimation, QEasingCurve, QRect, Property
 from PySide6.QtGui import QIcon, QPixmap, QDragEnterEvent, QDropEvent, QPainter, QColor, QPen
 
 import json
-import os
+import re
+from urllib.parse import urlparse
+import yt_dlp
 
 # Код для перезапуска приложения
 RESTART_CODE = 1000
@@ -23,49 +26,221 @@ RESTART_CODE = 1000
 from src.core.downloader import VideoDownloader
 from src.core.logger import get_logger
 from src.core.localization import get_localization, _
+from src.core.thread_manager import thread_manager
+from src.core.base_worker import BaseWorker
 from src.ui.audio_video_tab import AudioVideoTab
 from src.ui.conversion_tab import ConversionTab
 
 
-class DownloadWorker(QThread):
+class DownloadWorker(BaseWorker):
     """Рабочий поток для загрузки видео"""
-    progress_updated = Signal(float, str)
     download_finished = Signal(bool, str)
-    error = Signal(str)
     
-    def __init__(self, url, output_path, format_option, codec="h264", referrer=None):
+    def __init__(self, url, output_path, format_id, referrer=None):
         super().__init__()
         self.url = url
         self.output_path = output_path
-        self.format_option = format_option
-        self.codec = codec
+        self.format_id = format_id
         self.referrer = referrer
         self.downloader = VideoDownloader()
-        self.logger = get_logger()
+        self._download_started = False
+        self._ydl_instance = None  # Для отслеживания экземпляра yt-dlp
     
-    def run(self):
+    def work(self):
+        """Основная логика загрузки видео"""
         try:
+            if self.check_cancelled():
+                return
+                
+            # Валидация параметров перед началом загрузки
+            if not self.url or not self.url.strip():
+                self.error.emit("URL не может быть пустым")
+                return
+                
+            if not self.output_path or not self.output_path.strip():
+                self.error.emit("Путь для сохранения не может быть пустым")
+                return
+            
             self.logger.info(f"Начало загрузки видео: {self.url}")
-            self.logger.info(f"Формат: {self.format_option}, кодек: {self.codec}, путь сохранения: {self.output_path}")
+            self.logger.info(f"ID формата: {self.format_id}, путь сохранения: {self.output_path}")
             
-            result_file = self.downloader.download(
-                self.url, 
-                self.output_path, 
-                self.format_option,
-                progress_callback=self.progress_updated.emit,
-                codec=self.codec,
-                referrer=self.referrer
-            )
+            if self.check_cancelled():
+                return
+                
+            self._download_started = True
             
-            self.logger.info(f"Загрузка завершена успешно: {result_file}")
-            self.download_finished.emit(True, _("status_complete").format(filename=os.path.basename(result_file)))
+            # Используем ID формата напрямую
+            ydl_opts = {
+                'format': self.format_id,
+                'outtmpl': os.path.join(self.output_path, '%(title)s.%(ext)s'),
+                'noplaylist': True,
+                'quiet': True,
+                'no_warnings': True,
+                'ignoreerrors': False,
+            }
+            
+            # Добавляем referrer, если он указан
+            if self.referrer:
+                ydl_opts['http_headers'] = {
+                    'Referer': self.referrer,
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                }
+            
+            # Добавляем хук прогресса
+            ydl_opts['progress_hooks'] = [self.downloader._progress_hook(self._progress_callback)]
+            
+            # Загружаем видео напрямую через yt-dlp
+            try:
+                self._ydl_instance = yt_dlp.YoutubeDL(ydl_opts)
+                # Регистрируем yt-dlp экземпляр для автоматической очистки
+                self.add_resource_for_cleanup(self._ydl_instance, self._cleanup_ydl)
+                
+                with self._ydl_instance as ydl:
+                    info = ydl.extract_info(self.url, download=True)
+                    if info:
+                        filename = ydl.prepare_filename(info)
+                        if 'ext' in info and not filename.endswith(info['ext']):
+                            base_filename = os.path.splitext(filename)[0]
+                            filename = f"{base_filename}.{info['ext']}"
+                        
+                        result_file = os.path.join(self.output_path, os.path.basename(filename))
+                    else:
+                        raise Exception("Не удалось получить информацию о видео")
+            except Exception as e:
+                self.error.emit(f"Ошибка при загрузке видео: {str(e)}")
+                return
+            
+            if self.check_cancelled():
+                self.logger.info("Загрузка была отменена")
+                return
+            
+            if result_file and os.path.exists(result_file):
+                self.logger.info(f"Загрузка завершена успешно: {result_file}")
+                self.download_finished.emit(True, f"Загрузка завершена: {os.path.basename(result_file)}")
+            else:
+                self.error.emit("Файл не был создан после загрузки")
+                
+        except ValueError as e:
+            self.handle_error(e, f"Ошибка валидации: {str(e)}")
+        except PermissionError as e:
+            self.handle_error(e, f"Ошибка доступа: {str(e)}")
         except Exception as e:
-            self.logger.error(f"Ошибка загрузки: {str(e)}", exc_info=True)
-            self.error.emit(_("status_error").format(error=str(e)))
+            if not self.is_cancelled():
+                self.handle_error(e, f"Ошибка загрузки: {str(e)}")
+        finally:
+            self._download_started = False
+    
+    def _cleanup_ydl(self):
+        """Очистка ресурсов yt-dlp"""
+        if self._ydl_instance:
+            try:
+                # Принудительно останавливаем все активные загрузки
+                if hasattr(self._ydl_instance, '_download_retcode'):
+                    self._ydl_instance._download_retcode = 1
+                self.logger.debug("Ресурсы yt-dlp очищены")
+            except Exception as e:
+                self.logger.warning(f"Ошибка при очистке yt-dlp: {e}")
+            finally:
+                self._ydl_instance = None
+    
+    def terminate(self):
+        """Переопределяем terminate для корректной остановки загрузки"""
+        self.logger.info("Принудительное завершение загрузки")
+        self._is_cancelled = True
+        
+        # Останавливаем yt-dlp если он активен
+        if self._ydl_instance:
+            try:
+                if hasattr(self._ydl_instance, '_download_retcode'):
+                    self._ydl_instance._download_retcode = 1
+            except Exception as e:
+                self.logger.warning(f"Ошибка при остановке yt-dlp: {e}")
+        
+        super().terminate()
+    
+    def _progress_callback(self, progress: float, status: str):
+        """Обратный вызов для обновления прогресса с проверкой отмены"""
+        if not self.is_cancelled():
+            self.progress_updated.emit(progress, status)
+    
+    def cancel(self):
+        """Отменяет загрузку"""
+        super().cancel()
+        if self._download_started:
+            self.logger.info("Отмена загрузки по запросу пользователя")
+
+
+class VideoInfoWorker(BaseWorker):
+    """Рабочий поток для получения информации о видео"""
+    info_fetched = Signal(dict)
+    
+    def __init__(self, url):
+        super().__init__()
+        self.url = url
+        self.downloader = VideoDownloader()
+        # Импортируем обработчик yt-dlp
+        from src.core.yt_dlp_handler import YtDlpHandler
+        self.yt_handler = YtDlpHandler()
+        # Регистрируем yt_handler для очистки
+        self.add_resource_for_cleanup(self.yt_handler, self._cleanup_yt_handler)
+    
+    def work(self):
+        """Основная логика получения информации о видео"""
+        try:
+            if self.check_cancelled():
+                return
+                
+            if not self.url or not self.url.strip():
+                self.error.emit("URL не может быть пустым")
+                return
+            
+            # Получаем информацию о видео через существующий метод
+            video_info = self.yt_handler.get_video_info(self.url)
+            
+            if self.check_cancelled():
+                return
+            
+            if video_info:
+                # Выводим в консоль информацию для отладки
+                self.logger.info(f"Получена информация о видео: {video_info.get('title', 'неизвестно')}")
+                
+                # Отправляем сигнал с информацией о видео
+                self.info_fetched.emit(video_info)
+            else:
+                self.error.emit("Не удалось получить информацию о видео")
+                    
+        except Exception as e:
+            # Обрабатываем все ошибки через базовый метод
+            self.handle_error(e, f"Ошибка при получении информации о видео: {str(e)}")
+    
+    def _cleanup_yt_handler(self):
+        """Очистка ресурсов YtDlpHandler"""
+        if self.yt_handler:
+            try:
+                # Если у обработчика есть метод cleanup, вызываем его
+                if hasattr(self.yt_handler, 'cleanup'):
+                    self.yt_handler.cleanup()
+                self.logger.debug("Ресурсы YtDlpHandler очищены")
+            except Exception as e:
+                self.logger.warning(f"Ошибка при очистке YtDlpHandler: {e}")
+            finally:
+                self.yt_handler = None
 
 
 class MainWindow(QMainWindow):
     """Главное окно приложения"""
+    
+    def format_filesize(self, size_bytes):
+        """Форматирует размер файла в человекочитаемый вид"""
+        if not size_bytes:
+            return "Неизвестно"
+            
+        # Конвертируем байты в более читаемый формат
+        for unit in ['Б', 'КБ', 'МБ', 'ГБ', 'ТБ']:
+            if size_bytes < 1024.0:
+                return f"{size_bytes:.2f} {unit}"
+            size_bytes /= 1024.0
+        return f"{size_bytes:.2f} ПБ"
     
     def __init__(self):
         super().__init__()
@@ -75,6 +250,12 @@ class MainWindow(QMainWindow):
         
         self.logger = get_logger()
         self.logger.info("Инициализация главного окна приложения")
+        
+        # Переменные для управления состоянием
+        self.video_info_worker = None
+        self.video_info_fetched = False
+        self.current_video_info = None
+        self.formats_data = {}  # Инициализация словаря форматов
         
         self.setWindowTitle(_("app_title"))
         self.setMinimumSize(QSize(600, 460))  # Увеличена высота на 15% (400 -> 460)
@@ -149,16 +330,6 @@ class MainWindow(QMainWindow):
         
         main_layout.addWidget(self.tab_widget)
         
-        # Прогресс загрузки
-        progress_layout = QVBoxLayout()
-        self.progress_label = QLabel(_("status_ready"))
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
-        self.progress_bar.setValue(0)
-        progress_layout.addWidget(self.progress_label)
-        progress_layout.addWidget(self.progress_bar)
-        main_layout.addLayout(progress_layout)
-        
         # Растягивающийся пробел
         main_layout.addStretch()
         
@@ -175,108 +346,220 @@ class MainWindow(QMainWindow):
     def setup_general_tab(self):
         """Настройка вкладки 'Общие'"""
         layout = QVBoxLayout(self.general_tab)
-        layout.setSpacing(12)  # Унифицированный интервал
-        layout.setContentsMargins(15, 15, 15, 15)  # Унифицированные отступы
+        layout.setSpacing(12)  # Стандартный интервал как в ConversionTab
+        layout.setContentsMargins(15, 15, 15, 15)  # Стандартные отступы как в ConversionTab
         
-        # URL видео - унифицированная высота
+        # Единый стиль для всех QGroupBox
+        group_box_style = """
+            QGroupBox {
+                font-weight: bold;
+                border: 2px solid #cccccc;
+                border-radius: 5px;
+                margin-top: 1ex;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px 0 5px;
+            }
+        """
+        
+        # Группа "Настройки загрузки"
+        download_group = QGroupBox(_("download_settings"))
+        download_group.setStyleSheet(group_box_style)
+        download_layout = QVBoxLayout(download_group)
+        
+        # URL видео
         url_layout = QHBoxLayout()
         url_label = QLabel(_("url_label"))
-        url_label.setFixedWidth(120)  # Фиксированная ширина лейбла
-        url_label.setFixedHeight(30)  # Фиксированная высота лейбла
+        url_label.setFixedWidth(120)
+        url_label.setFixedHeight(30)
+        
         self.url_input = QLineEdit()
         self.url_input.setPlaceholderText("Вставьте URL видео для загрузки")
-        self.url_input.setFixedHeight(30)  # Фиксированная высота поля ввода
+        self.url_input.setFixedHeight(30)
+        
+        self.fetch_info_button = QPushButton("Получить данные о видео")
+        self.fetch_info_button.setFixedHeight(30)
+        self.fetch_info_button.setFixedWidth(180)  # Увеличенная ширина для длинного текста
+        
         url_layout.addWidget(url_label)
         url_layout.addWidget(self.url_input)
-        layout.addLayout(url_layout)
+        url_layout.addWidget(self.fetch_info_button)
         
-        # Выбор формата - унифицированная высота
-        format_layout = QHBoxLayout()
-        format_label = QLabel(_("format_label"))
-        format_label.setFixedWidth(120)  # Фиксированная ширина лейбла
-        format_label.setFixedHeight(30)  # Фиксированная высота лейбла
+        download_layout.addLayout(url_layout)
+        
+        # Информационная подпись под полем URL
+        url_info_label = QLabel("Поддерживаются ссылки с YouTube, Kinescope и других популярных платформ")
+        url_info_label.setStyleSheet("color: #666; font-size: 11px;")
+        url_info_label.setWordWrap(True)
+        download_layout.addWidget(url_info_label)
+        
+        layout.addWidget(download_group)
+        
+        # Разделитель
+        separator1 = QFrame()
+        separator1.setFrameShape(QFrame.HLine)
+        separator1.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(separator1)
+        
+        # Группа "Информация о видео"
+        info_group = QGroupBox("Информация о видео")
+        info_group.setStyleSheet(group_box_style)
+        info_layout = QVBoxLayout(info_group)
+        
+        # Поля информации о видео
+        self.video_title_label = QLabel("Название: ")
+        self.video_author_label = QLabel("Автор: ")
+        self.video_duration_label = QLabel("Длительность: ")
+        
+        info_layout.addWidget(self.video_title_label)
+        info_layout.addWidget(self.video_author_label)
+        info_layout.addWidget(self.video_duration_label)
+        
+        layout.addWidget(info_group)
+        
+        # Разделитель
+        separator2 = QFrame()
+        separator2.setFrameShape(QFrame.HLine)
+        separator2.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(separator2)
+        
+        # Группа "Выбор формата"
+        format_group = QGroupBox("Выбор формата")
+        format_group.setStyleSheet(group_box_style)
+        format_layout = QVBoxLayout(format_group)
+        
+        # Выпадающий список для выбора формата
+        format_selection_layout = QHBoxLayout()
+        format_label = QLabel("Формат видео:")
         self.format_combo = QComboBox()
-        self.format_combo.addItem(_("format_best"), "best")
-        self.format_combo.addItem(_("format_1080p"), "1080")
-        self.format_combo.addItem(_("format_720p"), "720")
-        self.format_combo.addItem(_("format_480p"), "480")
-        self.format_combo.addItem(_("format_mp3"), "mp3")
-        self.format_combo.addItem("Только аудио (M4A)", "m4a")
-        self.format_combo.setFixedHeight(30)  # Фиксированная высота комбобокса
-        format_layout.addWidget(format_label)
-        format_layout.addWidget(self.format_combo)
-        layout.addLayout(format_layout)
+        self.format_combo.setMinimumHeight(30)
+        self.format_combo.setStyleSheet("""
+            QComboBox {
+                border: 2px solid #cccccc;
+                border-radius: 5px;
+                padding: 5px;
+                background-color: white;
+                color: #333333;
+                font-size: 12px;
+            }
+            QComboBox:hover {
+                border-color: #0078d4;
+            }
+            QComboBox:focus {
+                border-color: #0078d4;
+                outline: none;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 20px;
+                background-color: white;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 5px solid #333333;
+                margin-right: 5px;
+            }
+            QComboBox QAbstractItemView {
+                border: 1px solid #cccccc;
+                background-color: white;
+                color: #333333;
+                selection-background-color: #0078d4;
+                selection-color: white;
+            }
+            QComboBox QAbstractItemView::item {
+                padding: 5px;
+                border: none;
+                color: #333333;
+            }
+            QComboBox QAbstractItemView::item:selected {
+                background-color: #0078d4;
+                color: white;
+            }
+            QComboBox QAbstractItemView::item:hover {
+                background-color: #e6f3ff;
+                color: #333333;
+            }
+        """)
+        self.format_combo.addItem("Выберите формат после получения данных о видео")
+        self.format_combo.setEnabled(False)
         
-        # Выбор кодека (AV1/H.264) - унифицированная высота
-        codec_layout = QHBoxLayout()
-        codec_label = QLabel("Кодек видео:")
-        codec_label.setFixedWidth(120)  # Фиксированная ширина лейбла
-        codec_label.setFixedHeight(30)  # Фиксированная высота лейбла
-        self.codec_combo = QComboBox()
-        self.codec_combo.addItem("H.264 (совместимость)", "h264")
-        self.codec_combo.addItem("AV1 (лучшее качество)", "av1")
-        self.codec_combo.setFixedHeight(30)  # Фиксированная высота комбобокса
+        format_selection_layout.addWidget(format_label)
+        format_selection_layout.addWidget(self.format_combo, 1)
+        format_layout.addLayout(format_selection_layout)
         
-        # Добавляем кнопку с вопросительным знаком для подсказки
-        self.codec_help_button = QPushButton("?")
-        self.codec_help_button.setFixedSize(30, 30)  # Унифицированный размер кнопки помощи
-        self.codec_help_button.setToolTip("H.264: Лучшая совместимость с устройствами\nAV1: Лучшее качество при меньшем размере файла, но может не поддерживаться старыми устройствами")
-        self.codec_help_button.clicked.connect(self.show_codec_help)
+        layout.addWidget(format_group)
         
-        codec_layout.addWidget(codec_label)
-        codec_layout.addWidget(self.codec_combo)
-        codec_layout.addWidget(self.codec_help_button)
-        layout.addLayout(codec_layout)
+        # Разделитель
+        separator3 = QFrame()
+        separator3.setFrameShape(QFrame.HLine)
+        separator3.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(separator3)
         
-        # Выбор директории для сохранения - унифицированная высота
+        # Группа "Настройки сохранения"
+        save_group = QGroupBox("Настройки сохранения")
+        save_group.setStyleSheet(group_box_style)
+        save_group_layout = QVBoxLayout(save_group)
+        
+        # Выбор директории для сохранения
         save_layout = QHBoxLayout()
         save_label = QLabel(_("save_path_label"))
-        save_label.setFixedWidth(120)  # Фиксированная ширина лейбла
-        save_label.setFixedHeight(30)  # Фиксированная высота лейбла
+        save_label.setFixedWidth(120)
+        save_label.setFixedHeight(30)
+        
         self.save_path_input = QLineEdit()
-        self.save_path_input.setReadOnly(True)
-        self.save_path_input.setFixedHeight(30)  # Фиксированная высота поля ввода
+        self.save_path_input.setPlaceholderText("Выберите папку для сохранения файлов")
+        self.save_path_input.setFixedHeight(30)
+        
         self.browse_button = QPushButton(_("browse_button"))
-        self.browse_button.setFixedHeight(30)  # Фиксированная высота кнопки
-        self.browse_button.setFixedWidth(100)  # Фиксированная ширина кнопки
+        self.browse_button.setFixedHeight(30)
+        self.browse_button.setFixedWidth(100)  # Стандартная ширина как в ConversionTab
+        
         save_layout.addWidget(save_label)
         save_layout.addWidget(self.save_path_input)
         save_layout.addWidget(self.browse_button)
-        layout.addLayout(save_layout)
         
-        # Добавляем растягивающийся пробел для выравнивания кнопки загрузки внизу
-        layout.addStretch()
+        save_group_layout.addLayout(save_layout)
         
-        # Кнопка загрузки - унифицированный стиль и позиционирование
-        download_layout = QHBoxLayout()
-        download_layout.addStretch()
+        # Информационная подпись для пути сохранения
+        save_hint_label = QLabel("По умолчанию файлы сохраняются в папку Downloads")
+        save_hint_label.setStyleSheet("color: #666; font-size: 11px;")
+        save_hint_label.setWordWrap(True)
+        save_group_layout.addWidget(save_hint_label)
+        
+        layout.addWidget(save_group)
+        
+        # Разделитель
+        separator4 = QFrame()
+        separator4.setFrameShape(QFrame.HLine)
+        separator4.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(separator4)
+        
+        # Группа "Загрузка"
+        download_action_group = QGroupBox("Загрузка")
+        download_action_group.setStyleSheet(group_box_style)
+        download_action_layout = QVBoxLayout(download_action_group)
+        
+        # Прогресс-бар
+        self.general_progress_bar = QProgressBar()
+        self.general_progress_bar.setFixedHeight(30)  # Стандартная высота как в ConversionTab
+        self.general_progress_bar.setVisible(False)
+        download_action_layout.addWidget(self.general_progress_bar)
+        
+        # Кнопка загрузки
         self.download_button = QPushButton(_("download_button"))
-        self.download_button.setStyleSheet("""
-            QPushButton {
-                font-size: 14px; 
-                font-weight: bold;
-                padding: 10px 20px; 
-                background-color: #007acc;
-                color: white;
-                border: none;
-                border-radius: 6px;
-            }
-            QPushButton:hover {
-                background-color: #005a9e;
-            }
-            QPushButton:pressed {
-                background-color: #004578;
-            }
-            QPushButton:disabled {
-                background-color: #cccccc;
-                color: #666666;
-            }
-        """)
-        self.download_button.setFixedHeight(40)  # Фиксированная высота кнопки
-        self.download_button.setFixedWidth(160)  # Фиксированная ширина кнопки
-        download_layout.addWidget(self.download_button)
-        download_layout.addStretch()
-        layout.addLayout(download_layout)
+        self.download_button.setFixedHeight(30)
+        download_action_layout.addWidget(self.download_button)
+        
+        layout.addWidget(download_action_group)
+        
+        # Подключение сигналов
+        self.fetch_info_button.clicked.connect(self.fetch_video_info)
+        self.browse_button.clicked.connect(self.browse_save_location)
+        self.download_button.clicked.connect(self.start_download)
         
     def setup_kinescope_tab(self):
         """Настройка вкладки 'Kinescope'"""
@@ -401,7 +684,25 @@ class MainWindow(QMainWindow):
         # Добавляем растягивающийся пробел для выравнивания кнопки загрузки внизу - как в General
         layout.addStretch()
         
-        # Кнопка загрузки - унифицированный стиль и позиционирование - точно как в General
+        # Прогресс-бар для загрузки Kinescope
+        self.kinescope_progress_bar = QProgressBar()
+        self.kinescope_progress_bar.setVisible(False)
+        self.kinescope_progress_bar.setStyleSheet("""
+            QProgressBar {
+                border: 2px solid #cccccc;
+                border-radius: 5px;
+                text-align: center;
+                font-weight: bold;
+                background-color: #f0f0f0;
+            }
+            QProgressBar::chunk {
+                background-color: #007acc;
+                border-radius: 3px;
+            }
+        """)
+        layout.addWidget(self.kinescope_progress_bar)
+        
+        # Кнопка загрузки - унифицированный стиль и позиционирование - как в General
         download_layout = QHBoxLayout()
         download_layout.addStretch()
         self.kinescope_download_button = QPushButton(_("download_button"))
@@ -438,9 +739,14 @@ class MainWindow(QMainWindow):
     
     def setup_connections(self):
         """Настройка сигналов и слотов"""
-        # Общие вкладки
-        self.browse_button.clicked.connect(self.browse_save_location)
-        self.download_button.clicked.connect(self.start_download)
+        # Общие вкладки (browse_button и download_button уже подключены в setup_general_tab)
+        self.fetch_info_button.clicked.connect(self.fetch_video_info)
+        
+        # Отслеживание изменений в поле URL
+        self.url_input.textChanged.connect(self.on_url_changed)
+        
+        # Отслеживание выбора формата в выпадающем списке
+        self.format_combo.currentTextChanged.connect(self.on_format_selection_changed)
         
         # Переключатель языка
         self.lang_toggle.language_changed.connect(self.change_language_from_toggle)
@@ -449,7 +755,6 @@ class MainWindow(QMainWindow):
         self.kinescope_browse_button.clicked.connect(self.browse_kinescope_save_path)
         self.kinescope_download_button.clicked.connect(self.start_kinescope_download)
         # self.select_json_button.clicked.connect(self.select_json_file)  # удалено
-        self.codec_help_button.clicked.connect(self.show_codec_help)
         self.kinescope_codec_help_button.clicked.connect(self.show_codec_help)
         
         # Настройка обработки перетаскивания для drop_area
@@ -459,8 +764,181 @@ class MainWindow(QMainWindow):
         self.drop_area.mousePressEvent = self.drop_area_clicked
         
         # Подключение сигналов новых вкладок к прогресс-бару
-        self.audio_video_tab.progress_updated = self.update_progress
-        self.conversion_tab.progress_updated = self.update_progress
+        # Удаляем старые подключения, так как теперь используем отдельные методы для каждой вкладки
+        # self.audio_video_tab.progress_updated = self.update_progress
+        # self.conversion_tab.progress_updated = self.update_progress
+        
+        # Изначально делаем элементы управления неактивными
+        self.set_download_controls_enabled(False)
+    
+    def fetch_video_info(self):
+        """Получает информацию о видео"""
+        url = self.url_input.text().strip()
+        
+        if not url:
+            QMessageBox.warning(self, "Предупреждение", "Пожалуйста, введите URL видео")
+            return
+        
+        if not self.validate_url(url):
+            QMessageBox.warning(self, "Ошибка", "Неверный URL. Поддерживаются YouTube, Vimeo, Dailymotion и другие популярные платформы.")
+            return
+        
+        # Отменяем предыдущий запрос, если он выполняется
+        if self.video_info_worker and self.video_info_worker.isRunning():
+            self.video_info_worker.cancel()
+            self.video_info_worker.wait(3000)
+        
+        # Создаем новый worker
+        self.video_info_worker = VideoInfoWorker(url)
+        self.video_info_worker.info_fetched.connect(self.on_video_info_fetched)
+        self.video_info_worker.error.connect(self.on_video_info_error)
+        
+        # Обновляем UI
+        self.fetch_info_button.setEnabled(False)
+        self.fetch_info_button.setText("Получение данных...")
+        self.statusBar.showMessage("Получение информации о видео...")
+        
+        # Запускаем worker
+        self.video_info_worker.start()
+    
+    @Slot(dict)
+    def on_video_info_fetched(self, video_info):
+        """Обработчик успешного получения информации о видео"""
+        self.current_video_info = video_info
+        self.video_info_fetched = True
+        
+        # Обновляем UI
+        self.fetch_info_button.setEnabled(True)
+        self.fetch_info_button.setText("Получить данные о видео")
+        
+        # Отображаем информацию о видео
+        title = video_info.get('title', 'Неизвестно')
+        author = video_info.get('uploader', 'Неизвестно')
+        duration = video_info.get('duration', 0)
+        duration_str = f"{duration//60}:{duration%60:02d}" if duration else "Неизвестно"
+        
+        # Обновляем метки с информацией о видео
+        self.video_title_label.setText(f"Название: {title}")
+        self.video_author_label.setText(f"Автор: {author}")
+        self.video_duration_label.setText(f"Длительность: {duration_str}")
+        
+        # Заполняем выпадающий список форматов
+        self.format_combo.clear()  # Очищаем список
+        formats = video_info.get('formats', [])
+        
+        # Сохраняем информацию о форматах для последующего использования
+        self.formats_data = {}
+        
+        for format_info in formats:
+            # Проверяем наличие аудиокодека
+            acodec = format_info.get('acodec', 'none')
+            
+            # Пропускаем форматы без аудиокодека (только видео)
+            if acodec == 'none' or not acodec:
+                continue
+            
+            # Формат (расширение)
+            ext = format_info.get('ext', 'Неизвестно')
+            
+            # Разрешение
+            resolution = format_info.get('resolution', 'Неизвестно')
+            
+            # Размер
+            filesize = format_info.get('filesize_approx', format_info.get('filesize', 0))
+            filesize_str = self.format_filesize(filesize) if filesize else 'Неизвестно'
+            
+            # ID формата
+            format_id = format_info.get('format_id', '')
+            
+            # Создаем текст для отображения в выпадающем списке с информацией об аудиокодеке
+            display_text = f"{ext} - {resolution} ({filesize_str}) [аудио: {acodec}]"
+            
+            # Добавляем в выпадающий список
+            self.format_combo.addItem(display_text)
+            
+            # Сохраняем данные формата для использования при загрузке
+            self.formats_data[display_text] = {
+                'format_id': format_id,
+                'ext': ext,
+                'resolution': resolution,
+                'filesize': filesize_str,
+                'acodec': acodec
+            }
+        
+        # Активируем выпадающий список
+        self.format_combo.setEnabled(True)
+        
+        # Кнопка загрузки будет активирована при выборе формата
+        self.download_button.setEnabled(False)
+        
+        # Показываем информацию о видео в статусной строке
+        self.statusBar.showMessage(f"Видео: {title[:50]} | Длительность: {duration_str}")
+        
+        self.logger.info(f"Информация о видео получена: {title}")
+    
+    @Slot(str)
+    def on_video_info_error(self, error_message):
+        """Обработчик ошибки получения информации о видео"""
+        self.video_info_fetched = False
+        self.current_video_info = None
+        
+        # Деактивируем элементы управления
+        self.set_download_controls_enabled(False)
+        
+        # Обновляем UI
+        self.fetch_info_button.setEnabled(True)
+        self.fetch_info_button.setText("Получить данные о видео")
+        
+        # Показываем ошибку
+        QMessageBox.warning(self, "Ошибка", f"Не удалось получить информацию о видео:\n{error_message}")
+        self.statusBar.showMessage("Готов")
+        
+        self.logger.error(f"Ошибка получения информации о видео: {error_message}")
+    
+    def on_url_changed(self):
+        """Обработчик изменения URL"""
+        # Сбрасываем состояние при изменении URL
+        self.video_info_fetched = False
+        self.current_video_info = None
+        
+        # Деактивируем элементы управления
+        self.set_download_controls_enabled(False)
+        
+        # Очищаем выпадающий список форматов и деактивируем его
+        if hasattr(self, 'format_combo'):
+            self.format_combo.clear()
+            self.format_combo.addItem("Выберите формат после получения данных о видео")
+            self.format_combo.setEnabled(False)
+            self.formats_data = {}
+        
+        # Обновляем статусную строку
+        self.statusBar.showMessage(_("status_ready"))
+        
+    def on_format_selection_changed(self):
+        """Обработчик выбора формата в выпадающем списке"""
+        # Активируем кнопку загрузки только если выбран формат (не дефолтный текст)
+        current_text = self.format_combo.currentText()
+        is_valid_selection = (current_text != "Выберите формат после получения данных о видео" 
+                             and current_text in self.formats_data)
+        self.download_button.setEnabled(is_valid_selection)
+    
+    def update_format_options(self, video_info):
+        """Обновляет доступные форматы на основе информации о видео (не используется с таблицей форматов)."""
+        return
+    
+    def reset_format_options(self):
+        """Сбрасывает форматы к значениям по умолчанию (не используется с таблицей форматов)."""
+        return
+    
+    def set_download_controls_enabled(self, enabled):
+        """Управляет активностью элементов управления загрузкой"""
+        self.download_button.setEnabled(enabled)
+        self.save_path_input.setEnabled(enabled)
+        # Кнопка "Обзор" должна быть всегда активна для выбора пути сохранения
+        # self.browse_button.setEnabled(enabled)  # Убираем эту строку
+        # Включаем/отключаем выпадающий список форматов, если он существует
+        if hasattr(self, 'format_combo'):
+            self.format_combo.setEnabled(enabled)
     
     def browse_save_location(self):
         """Открывает диалог выбора директории для сохранения"""
@@ -729,31 +1207,120 @@ AV1:
             self.json_info_label.setStyleSheet("color: #ff4444; font-weight: bold; margin: 5px 0;")
             self.logger.error(f"Неизвестная ошибка при обработке JSON файла: {file_path}: {e}", exc_info=True)
             
+    def validate_url(self, url: str) -> bool:
+        """Валидация URL для проверки корректности ссылки"""
+        if not url or not url.strip():
+            return False
+        
+        # Базовая проверка URL
+        try:
+            parsed = urlparse(url.strip())
+            if not parsed.scheme or not parsed.netloc:
+                return False
+            
+            # Проверка на поддерживаемые протоколы
+            if parsed.scheme not in ['http', 'https']:
+                return False
+                
+            return True
+        except Exception:
+            return False
+    
+    def validate_kinescope_url(self, url: str) -> bool:
+        """Специальная валидация для Kinescope URL"""
+        if not self.validate_url(url):
+            return False
+            
+        # Проверка на Kinescope домен
+        parsed = urlparse(url.strip())
+        kinescope_domains = ['kinescope.io', 'www.kinescope.io']
+        
+        return parsed.netloc.lower() in kinescope_domains
+            
     def start_download(self):
         """Запускает процесс загрузки видео"""
-        url = self.url_input.text()
-        output_path = self.save_path_input.text()
-        format_option = self.format_combo.currentData()
-        codec = self.codec_combo.currentData()
-        
-        if not url:
-            QMessageBox.warning(self, _("dialog_title_warning"), _("error_empty_url"))
-            return
-        
-        if not output_path:
-            QMessageBox.warning(self, _("dialog_title_warning"), _("error_empty_save_path"))
-            return
+        try:
+            # Проверяем, не запущена ли уже загрузка
+            if hasattr(self, 'download_worker') and self.download_worker and self.download_worker.isRunning():
+                QMessageBox.warning(self, "Предупреждение", "Загрузка уже выполняется")
+                return
+                
+            # Очищаем предыдущий worker если он существует
+            if hasattr(self, 'download_worker') and self.download_worker:
+                thread_manager.unregister_thread("download_worker")
+                self.download_worker = None
+                
+            url = self.url_input.text()
+            output_path = self.save_path_input.text()
             
-        self.logger.info(f"Начало загрузки: URL={url}, Path={output_path}, Format={format_option}, Codec={codec}")
-        self.progress_label.setText(_("status_starting_download"))
-        self.progress_bar.setValue(0)
-        self.set_ui_enabled(False)
-        
-        self.download_worker = DownloadWorker(url, output_path, format_option, codec)
-        self.download_worker.progress_updated.connect(self.update_progress)
-        self.download_worker.download_finished.connect(self.download_finished)
-        self.download_worker.error.connect(self.download_error)
-        self.download_worker.start()
+            # Проверяем, что информация о видео была получена
+            if not self.video_info_fetched:
+                QMessageBox.warning(self, "Предупреждение", 
+                                  "Сначала необходимо получить данные о видео, нажав кнопку 'Получить данные о видео'")
+                return
+            
+            # Проверяем, что выбран формат в выпадающем списке
+            current_text = self.format_combo.currentText()
+            if (current_text == "Выберите формат после получения данных о видео" 
+                or current_text not in self.formats_data):
+                QMessageBox.warning(self, "Предупреждение", 
+                                  "Пожалуйста, выберите формат для скачивания из выпадающего списка")
+                return
+                
+            # Получаем ID формата из выбранного элемента
+            format_id = self.formats_data[current_text]['format_id']
+            
+            # Улучшенная валидация URL
+            if not url:
+                QMessageBox.warning(self, _("dialog_title_warning"), _("error_empty_url"))
+                return
+                
+            if not self.validate_url(url):
+                QMessageBox.warning(self, _("dialog_title_warning"), "Некорректный URL. Пожалуйста, введите правильную ссылку.")
+                return
+
+            if not output_path:
+                QMessageBox.warning(self, _("dialog_title_warning"), _("error_empty_save_path"))
+                return
+                
+            # Проверка существования и доступности директории
+            if not os.path.exists(output_path):
+                try:
+                    os.makedirs(output_path, exist_ok=True)
+                except OSError as e:
+                    QMessageBox.critical(self, _("dialog_title_error"), 
+                                       f"Не удалось создать директорию для сохранения: {str(e)}")
+                    return
+            
+            if not os.access(output_path, os.W_OK):
+                QMessageBox.critical(self, _("dialog_title_error"), 
+                                   "Нет прав на запись в выбранную директорию.")
+                return
+                
+            self.logger.info(f"Начало загрузки: URL={url}, Path={output_path}, Format ID={format_id}")
+            
+            # Показываем прогресс-бар на вкладке "Общие"
+            self.general_progress_bar.setVisible(True)
+            self.general_progress_bar.setValue(0)
+            self.set_ui_enabled(False)
+            
+            # Используем ID формата вместо опции формата и кодека
+            self.download_worker = DownloadWorker(url, output_path, format_id)
+            # Автоматическая регистрация потока происходит в BaseWorker.start()
+            self.download_worker.progress_updated.connect(self.update_general_progress)
+            self.download_worker.download_finished.connect(self.general_download_finished)
+            self.download_worker.error.connect(self.download_error)
+            self.download_worker.start()
+            
+        except Exception as e:
+            self.logger.error(f"Ошибка при запуске загрузки: {e}")
+            # Очищаем состояние при ошибке
+            if hasattr(self, 'download_worker') and self.download_worker:
+                thread_manager.unregister_thread("download_worker")
+                self.download_worker = None
+            self.set_ui_enabled(True)
+            self.general_progress_bar.setVisible(False)
+            QMessageBox.critical(self, _("dialog_title_error"), f"Ошибка при запуске загрузки: {str(e)}")
         
     def start_kinescope_download(self):
         """Запускает процесс загрузки видео с Kinescope"""
@@ -764,7 +1331,7 @@ AV1:
         output_path = self.kinescope_save_path_input.text().strip()
         
         self.logger.info(f"Начало загрузки Kinescope: URL={video_url}, Referrer={referrer}, Filename={filename}, Path={output_path}")
-        codec = self.codec_combo.currentText()
+        codec = self.kinescope_codec_combo.currentText()
         
         # Проверяем обязательные поля
         if not output_path:
@@ -789,60 +1356,112 @@ AV1:
         self.logger.info(f"Начало загрузки Kinescope: URL={video_url}, Path={full_output_path}, Referrer={referrer}, Codec={codec}")
         
         # Обновляем интерфейс
-        self.progress_label.setText(_("status_starting_download"))
-        self.progress_bar.setValue(0)
+        # Показываем прогресс-бар на вкладке "Kinescope"
+        self.kinescope_progress_bar.setVisible(True)
+        self.kinescope_progress_bar.setValue(0)
         self.set_ui_enabled(False)
         
-        # Запускаем загрузку
+        # Запускаем загрузку с форматом "best"
         self.download_worker = DownloadWorker(
             video_url, 
             full_output_path, 
-            "best", 
-            codec, 
+            "best",
             referrer=referrer if referrer else None
         )
-        self.download_worker.progress_updated.connect(self.update_progress)
-        self.download_worker.download_finished.connect(self.download_finished)
+        # Автоматическая регистрация потока происходит в BaseWorker.start()
+        self.download_worker.progress_updated.connect(self.update_kinescope_progress)
+        self.download_worker.download_finished.connect(self.kinescope_download_finished)
         self.download_worker.error.connect(self.download_error)
         self.download_worker.start()
             
     @Slot(float, str)
-    def update_progress(self, progress, status_message):
-        """Обновляет прогресс бар и статус загрузки"""
-        self.progress_bar.setValue(int(progress))
-        self.progress_label.setText(status_message)
+    def update_general_progress(self, progress, status_message):
+        """Обновляет прогресс загрузки на вкладке 'Общие'"""
+        self.general_progress_bar.setValue(int(progress))
+        self.statusBar.showMessage(status_message)
+        
+    @Slot(float, str)
+    def update_kinescope_progress(self, progress, status_message):
+        """Обновляет прогресс загрузки на вкладке 'Kinescope'"""
+        self.kinescope_progress_bar.setValue(int(progress))
         self.statusBar.showMessage(status_message)
         
     @Slot(bool, str)
-    def download_finished(self, success, message):
-        """Обрабатывает завершение загрузки"""
-        self.set_ui_enabled(True)
-        self.progress_label.setText(message)
-        self.statusBar.showMessage(message)
-        if success:
-            self.logger.info(f"Загрузка успешно завершена: {message}")
-            QMessageBox.information(self, _("dialog_title_info"), message)
-        else:
-            self.logger.error(f"Загрузка завершена с ошибкой: {message}")
-            QMessageBox.critical(self, _("dialog_title_error"), message)
+    def general_download_finished(self, success, message):
+        """Обрабатывает завершение загрузки на вкладке 'Общие'"""
+        try:
+            # Очищаем ссылку на worker и удаляем его из менеджера потоков
+            if hasattr(self, 'download_worker') and self.download_worker:
+                thread_manager.unregister_thread("download_worker")
+                self.download_worker = None
+                
+            self.general_progress_bar.setVisible(False)
+            self.set_ui_enabled(True)
+            self.statusBar.showMessage(message)
+            if success:
+                self.logger.info(f"Загрузка успешно завершена: {message}")
+                QMessageBox.information(self, _("dialog_title_info"), message)
+            else:
+                self.logger.error(f"Загрузка завершена с ошибкой: {message}")
+                QMessageBox.critical(self, _("dialog_title_error"), message)
+        except Exception as e:
+            self.logger.error(f"Ошибка в general_download_finished: {e}")
+            
+    @Slot(bool, str)
+    def kinescope_download_finished(self, success, message):
+        """Обрабатывает завершение загрузки на вкладке 'Kinescope'"""
+        try:
+            # Очищаем ссылку на worker и удаляем его из менеджера потоков
+            if hasattr(self, 'kinescope_download_worker') and self.kinescope_download_worker:
+                thread_manager.unregister_thread("kinescope_download_worker")
+                self.kinescope_download_worker = None
+                
+            self.kinescope_progress_bar.setVisible(False)
+            self.set_ui_enabled(True)
+            self.statusBar.showMessage(message)
+            if success:
+                self.logger.info(f"Загрузка Kinescope успешно завершена: {message}")
+                QMessageBox.information(self, _("dialog_title_info"), message)
+            else:
+                self.logger.error(f"Загрузка Kinescope завершена с ошибкой: {message}")
+                QMessageBox.critical(self, _("dialog_title_error"), message)
+        except Exception as e:
+            self.logger.error(f"Ошибка в kinescope_download_finished: {e}")
             
     @Slot(str)
     def download_error(self, message):
         """Обрабатывает ошибки загрузки"""
-        self.logger.error(f"Ошибка во время загрузки: {message}")
-        self.set_ui_enabled(True)
-        self.progress_label.setText(message)
-        self.statusBar.showMessage(message)
-        QMessageBox.critical(self, _("dialog_title_error"), message)
+        try:
+            self.logger.error(f"Ошибка во время загрузки: {message}")
+            
+            # Очищаем ссылки на workers при ошибке
+            if hasattr(self, 'download_worker') and self.download_worker:
+                thread_manager.unregister_thread("download_worker")
+                self.download_worker = None
+            if hasattr(self, 'kinescope_download_worker') and self.kinescope_download_worker:
+                thread_manager.unregister_thread("kinescope_download_worker")
+                self.kinescope_download_worker = None
+                
+            # Скрываем все прогресс-бары при ошибке
+            if hasattr(self, 'general_progress_bar'):
+                self.general_progress_bar.setVisible(False)
+            if hasattr(self, 'kinescope_progress_bar'):
+                self.kinescope_progress_bar.setVisible(False)
+            self.set_ui_enabled(True)
+            self.statusBar.showMessage(message)
+            QMessageBox.critical(self, _("dialog_title_error"), message)
+        except Exception as e:
+            self.logger.error(f"Ошибка в download_error: {e}")
         
     def set_ui_enabled(self, enabled):
         """Включает/отключает элементы UI во время загрузки"""
         self.url_input.setEnabled(enabled)
-        self.format_combo.setEnabled(enabled)
-        self.codec_combo.setEnabled(enabled)
         self.browse_button.setEnabled(enabled)
         self.download_button.setEnabled(enabled)
+        if hasattr(self, 'format_combo'):
+            self.format_combo.setEnabled(enabled)
         
+        # Элементы вкладки Kinescope
         self.kinescope_url_input.setEnabled(enabled)
         self.referrer_input.setEnabled(enabled)
         self.kinescope_browse_button.setEnabled(enabled)
@@ -851,23 +1470,98 @@ AV1:
         self.tab_widget.setEnabled(enabled)
         
     def closeEvent(self, event):
-        """Обработка закрытия окна"""
-        if hasattr(self, 'download_worker') and self.download_worker.isRunning():
+        """Обработка закрытия окна с принудительным завершением всех потоков"""
+        active_workers = []
+        
+        # Собираем все активные потоки
+        if hasattr(self, 'download_worker') and self.download_worker and self.download_worker.isRunning():
+            active_workers.append(("загрузка", self.download_worker))
+        
+        if hasattr(self, 'conversion_tab') and self.conversion_tab:
+            if hasattr(self.conversion_tab, 'conversion_worker') and self.conversion_tab.conversion_worker and self.conversion_tab.conversion_worker.isRunning():
+                active_workers.append(("конвертация", self.conversion_tab.conversion_worker))
+        
+        if hasattr(self, 'audio_video_tab') and self.audio_video_tab:
+            if hasattr(self.audio_video_tab, 'audio_video_worker') and self.audio_video_tab.audio_video_worker and self.audio_video_tab.audio_video_worker.isRunning():
+                active_workers.append(("обработка аудио/видео", self.audio_video_tab.audio_video_worker))
+        
+        if active_workers:
+            # Формируем сообщение о активных процессах
+            processes = ', '.join([name for name, _ in active_workers])
             reply = QMessageBox.question(
                 self, 
                 _("dialog_title_warning"), 
-                _("confirm_exit_download_active"),
-                QMessageBox.Yes | QMessageBox.No, 
-                QMessageBox.No
+                f"Выполняются процессы: {processes}.\nВы уверены, что хотите закрыть приложение?\n\nВсе активные операции будут принудительно завершены.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, 
+                QMessageBox.StandardButton.No
             )
-            if reply == QMessageBox.Yes:
-                self.download_worker.terminate()
-                self.download_worker.wait()
+            
+            if reply == QMessageBox.StandardButton.Yes:
+                self.logger.info("Пользователь подтвердил выход, принудительно завершаем все потоки")
+                self._force_terminate_all_threads()
                 event.accept()
             else:
                 event.ignore()
         else:
             event.accept()
+    
+    def _force_terminate_all_threads(self):
+        """Принудительно завершает все активные потоки"""
+        # Завершаем все процессы FFmpeg
+        try:
+            from src.core.ffmpeg_processor import FFmpegProcessor
+            FFmpegProcessor.terminate_all_processes()
+        except Exception as e:
+            self.logger.error(f"Ошибка при завершении процессов FFmpeg: {e}")
+        
+        # Используем централизованный менеджер потоков для завершения всех зарегистрированных потоков
+        try:
+            self.logger.info("Завершение всех потоков через менеджер потоков")
+            thread_manager.terminate_all_threads()
+        except Exception as e:
+            self.logger.error(f"Ошибка при завершении потоков через менеджер: {e}")
+        
+        # Дополнительная проверка и завершение потоков, которые могли не быть зарегистрированы
+        threads_to_terminate = []
+        
+        # Собираем все потоки для завершения
+        if hasattr(self, 'download_worker') and self.download_worker:
+            threads_to_terminate.append(("Download Worker", self.download_worker))
+        
+        if hasattr(self, 'conversion_tab') and self.conversion_tab:
+            if hasattr(self.conversion_tab, 'worker') and self.conversion_tab.worker:
+                threads_to_terminate.append(("Conversion Worker", self.conversion_tab.worker))
+        
+        if hasattr(self, 'audio_video_tab') and self.audio_video_tab:
+            if hasattr(self.audio_video_tab, 'worker') and self.audio_video_tab.worker:
+                threads_to_terminate.append(("AudioVideo Worker", self.audio_video_tab.worker))
+        
+        # Завершаем каждый поток (дополнительная проверка)
+        for thread_name, thread in threads_to_terminate:
+            try:
+                if thread.isRunning():
+                    self.logger.info(f"Дополнительное завершение потока: {thread_name}")
+                    
+                    # Пытаемся корректно остановить поток
+                    if hasattr(thread, 'stop'):
+                        thread.stop()
+                    
+                    # Мягкое завершение
+                    thread.terminate()
+                    
+                    # Ждем завершения с таймаутом
+                    if not thread.wait(1000):  # 1 секунда
+                        self.logger.warning(f"Поток {thread_name} не отвечает, принудительно завершаем")
+                        # В PySide6/PyQt нет метода kill(), используем terminate() повторно
+                        thread.terminate()
+                        thread.wait(500)  # Ждем еще полсекунды после terminate
+                    
+                    self.logger.info(f"Поток {thread_name} успешно завершен")
+                    
+            except Exception as e:
+                self.logger.error(f"Ошибка при дополнительном завершении потока {thread_name}: {e}")
+        
+        self.logger.info("Завершение всех потоков завершено")
 
 
 class LanguageToggle(QWidget):

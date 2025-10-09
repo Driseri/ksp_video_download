@@ -120,26 +120,36 @@ class VideoDownloader:
                 }],
             }
         elif format_option == "720":
+            # Более гибкий подход с fallback опциями
             return {
-                'format': f'bestvideo[height<=720][vcodec*={video_codec}]+bestaudio/best[height<=720]/bestvideo[height<=720]+bestaudio/best',
+                'format': f'bestvideo[height<=720][vcodec*={video_codec}]+bestaudio/bestvideo[height<=720]+bestaudio/best[height<=720]/best',
             }
         elif format_option == "1080":
             return {
-                'format': f'bestvideo[height<=1080][vcodec*={video_codec}]+bestaudio/best[height<=1080]/bestvideo[height<=1080]+bestaudio/best',
+                'format': f'bestvideo[height<=1080][vcodec*={video_codec}]+bestaudio/bestvideo[height<=1080]+bestaudio/best[height<=1080]/best',
             }
         elif format_option == "480":
             return {
-                'format': f'bestvideo[height<=480][vcodec*={video_codec}]+bestaudio/best[height<=480]/bestvideo[height<=480]+bestaudio/best',
+                'format': f'bestvideo[height<=480][vcodec*={video_codec}]+bestaudio/bestvideo[height<=480]+bestaudio/best[height<=480]/best',
+            }
+        elif format_option == "360":
+            return {
+                'format': f'bestvideo[height<=360][vcodec*={video_codec}]+bestaudio/bestvideo[height<=360]+bestaudio/best[height<=360]/best',
             }
         else:  # best
             return {
                 'format': f'bestvideo[vcodec*={video_codec}]+bestaudio/bestvideo+bestaudio/best',
             }
     
-    def download(self, url: str, output_path: str, format_option: str, 
-                 progress_callback: Optional[Callable[[float, str], None]] = None,
-                 codec: str = "h264", referrer: str = None) -> str:
-        """Загружает видео по указанному URL
+
+    
+
+    
+    def download(self, url: str, output_path: str, format_option: str = "720", 
+                 codec: str = "h264", progress_callback: Callable[[float, str], None] = None, 
+                 referrer: str = None) -> str:
+        """
+        Загружает видео с указанного URL
         
         Args:
             url: URL видео для загрузки
@@ -149,12 +159,34 @@ class VideoDownloader:
             codec: Кодек видео (h264 или av1)
             referrer: Referrer для HTTP-запроса (используется для Kinescope)
         """
+        # Валидация входных параметров
+        if not url or not url.strip():
+            raise ValueError("URL не может быть пустым")
+            
+        if not output_path or not output_path.strip():
+            raise ValueError("Путь для сохранения не может быть пустым")
+            
+        url = url.strip()
+        output_path = output_path.strip()
+        
         self.logger.info(f"Начало загрузки видео: {url}")
         self.logger.info(f"Путь сохранения: {output_path}, формат: {format_option}, кодек: {codec}")
         
-        # Создание директории для загрузки, если она не существует
-        os.makedirs(output_path, exist_ok=True)
-        self.logger.debug(f"Директория для загрузки создана/проверена: {output_path}")
+        # Проверка и создание директории для загрузки
+        try:
+            if not os.path.exists(output_path):
+                os.makedirs(output_path, exist_ok=True)
+                self.logger.debug(f"Директория для загрузки создана: {output_path}")
+            elif not os.path.isdir(output_path):
+                raise ValueError(f"Указанный путь не является директорией: {output_path}")
+            elif not os.access(output_path, os.W_OK):
+                raise PermissionError(f"Нет прав на запись в директорию: {output_path}")
+            else:
+                self.logger.debug(f"Директория для загрузки проверена: {output_path}")
+        except OSError as e:
+            error_msg = f"Не удалось создать или получить доступ к директории {output_path}: {str(e)}"
+            self.logger.error(error_msg)
+            raise Exception(error_msg)
         
         # Базовые опции
         ydl_opts = {
@@ -172,8 +204,13 @@ class VideoDownloader:
             }
         
         # Добавление опций формата с учетом кодека
-        format_opts = self._get_format_options(format_option, codec)
-        ydl_opts.update(format_opts)
+        try:
+            format_opts = self._get_format_options(format_option, codec)
+            ydl_opts.update(format_opts)
+        except Exception as e:
+            error_msg = f"Ошибка при настройке формата: {str(e)}"
+            self.logger.error(error_msg)
+            raise Exception(error_msg)
         
         # Добавление хука прогресса, если предоставлен колбэк
         if progress_callback:
@@ -184,6 +221,39 @@ class VideoDownloader:
             self.logger.debug(f"Настройки загрузки: {ydl_opts}")
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 self.logger.info("Извлечение информации о видео...")
+                
+                # Сначала извлекаем информацию без загрузки для проверки
+                try:
+                    info = ydl.extract_info(url, download=False)
+                    if not info:
+                        raise Exception("Не удалось получить информацию о видео")
+                    
+                    # Проверяем доступность видео
+                    if info.get('is_live'):
+                        raise Exception("Загрузка прямых трансляций не поддерживается")
+                        
+                    if info.get('duration', 0) > 7200:  # 2 часа
+                        self.logger.warning(f"Видео очень длинное ({info.get('duration')} секунд)")
+                        
+                except yt_dlp.utils.ExtractorError as e:
+                    error_str = str(e)
+                    if "Video unavailable" in error_str or "Private video" in error_str:
+                        raise Exception("Видео недоступно или является приватным")
+                    elif "This video is not available" in error_str:
+                        raise Exception("Видео не найдено или удалено")
+                    elif "Sign in to confirm your age" in error_str or "age" in error_str.lower():
+                        # Специальная обработка для возрастных ограничений
+                        error_msg = ("Видео имеет возрастные ограничения. Попробуйте:\n"
+                                   "1. Войти в YouTube в любом браузере (Chrome, Edge, Firefox)\n"
+                                   "2. Подтвердить возраст в настройках аккаунта\n"
+                                   "3. Повторить загрузку\n"
+                                   "Для просмотра возрастного контента войдите в YouTube в браузере")
+                        self.logger.error(f"Возрастные ограничения: {error_str}")
+                        raise Exception(error_msg)
+                    else:
+                        raise Exception(f"Ошибка при получении информации о видео: {error_str}")
+                
+                # Теперь загружаем видео
                 info = ydl.extract_info(url, download=True)
                 
                 if info:
@@ -195,16 +265,30 @@ class VideoDownloader:
                         filename = f"{base_filename}.{info['ext']}"
                     
                     result_file = os.path.join(output_path, os.path.basename(filename))
+                    
+                    # Проверяем, что файл действительно создан
+                    if not os.path.exists(result_file):
+                        # Ищем файл с похожим именем
+                        base_name = os.path.splitext(os.path.basename(filename))[0]
+                        for file in os.listdir(output_path):
+                            if file.startswith(base_name):
+                                result_file = os.path.join(output_path, file)
+                                break
+                        else:
+                            raise Exception("Загруженный файл не найден")
+                    
                     self.logger.info(f"Загрузка завершена успешно: {result_file}")
                     return result_file
                 else:
                     error_msg = "Не удалось получить информацию о видео"
                     self.logger.error(error_msg)
-                    raise Exception(_("error_no_video_info"))
+                    raise Exception("Не удалось получить информацию о видео")
+                    
         except yt_dlp.utils.ExtractorError as e:
             error_msg = f"Ошибка экстрактора при загрузке видео: {str(e)}"
             self.logger.error(error_msg, exc_info=True)
-            # Проверяем, если это ошибка формата, пробуем с базовым форматом
+            
+            # Проверяем специфичные ошибки
             if "Requested format is not available" in str(e):
                 self.logger.warning("Попытка загрузки с базовым форматом...")
                 try:
@@ -225,13 +309,54 @@ class VideoDownloader:
                             return result_file
                 except Exception as fallback_e:
                     self.logger.error(f"Fallback загрузка также не удалась: {str(fallback_e)}")
-            
-            raise Exception(_("error_download_failed"))
+                    
+            # Обработка других типов ошибок экстрактора
+            error_str = str(e)
+            if "Video unavailable" in error_str:
+                raise Exception("Видео недоступно")
+            elif "Private video" in error_str:
+                raise Exception("Видео является приватным")
+            elif "This video is not available" in error_str:
+                raise Exception("Видео не найдено")
+            elif "Sign in to confirm your age" in error_str or "age" in error_str.lower() or "restricted" in error_str.lower():
+                # Специальная обработка для возрастных ограничений
+                error_msg = ("Видео имеет возрастные ограничения. Для решения проблемы:\n"
+                           "1. Войдите в YouTube в любом браузере (Chrome, Edge, Firefox)\n"
+                           "2. Подтвердите возраст в настройках аккаунта\n"
+                           "3. Повторите загрузку")
+                self.logger.error(f"Возрастные ограничения: {error_str}")
+                raise Exception(error_msg)
+            elif "authentication" in error_str.lower():
+                error_msg = ("Ошибка аутентификации. Попробуйте:\n"
+                           "1. Войти в YouTube в браузере\n"
+                           "2. Повторить загрузку")
+                self.logger.error(f"Ошибка аутентификации: {error_str}")
+                raise Exception(error_msg)
+            else:
+                raise Exception(f"Ошибка при загрузке видео: {error_str}")
+                
         except yt_dlp.utils.DownloadError as e:
             error_msg = f"Ошибка загрузки: {str(e)}"
             self.logger.error(error_msg, exc_info=True)
-            raise Exception(_("error_download_failed"))
+            
+            if "HTTP Error 403" in str(e):
+                raise Exception("Доступ к видео запрещен (HTTP 403)")
+            elif "HTTP Error 404" in str(e):
+                raise Exception("Видео не найдено (HTTP 404)")
+            elif "Connection" in str(e):
+                raise Exception("Ошибка соединения с сервером")
+            else:
+                raise Exception("Ошибка при загрузке видео")
+                
+        except ValueError as e:
+            self.logger.error(f"Ошибка валидации: {str(e)}")
+            raise e
+            
+        except PermissionError as e:
+            self.logger.error(f"Ошибка доступа: {str(e)}")
+            raise e
+            
         except Exception as e:
             error_msg = f"Неожиданная ошибка при загрузке видео: {str(e)}"
             self.logger.error(error_msg, exc_info=True)
-            raise Exception(_("error_download_failed"))
+            raise Exception("Неожиданная ошибка при загрузке видео")

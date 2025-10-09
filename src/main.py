@@ -4,6 +4,8 @@
 import sys
 import os
 import logging
+import signal
+import atexit
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import QDir
 
@@ -13,6 +15,49 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from src.ui.main_window import MainWindow
 from src.core.logger import get_logger
 from src.core.localization import get_localization, _
+
+
+def cleanup_on_exit():
+    """Функция очистки при завершении приложения"""
+    logger = get_logger()
+    logger.info("Выполнение очистки при завершении приложения")
+    
+    try:
+        # Завершаем все процессы FFmpeg
+        from src.core.ffmpeg_processor import FFmpegProcessor
+        FFmpegProcessor.terminate_all_processes()
+        
+        # Завершаем все потоки через менеджер
+        from src.core.thread_manager import thread_manager
+        thread_manager.terminate_all_threads()
+        
+        logger.info("Очистка завершена успешно")
+    except Exception as e:
+        logger.error(f"Ошибка при очистке: {e}")
+
+
+def signal_handler(signum, frame):
+    """Обработчик системных сигналов"""
+    logger = get_logger()
+    logger.info(f"Получен сигнал {signum}, выполняем экстренное завершение")
+    
+    # Выполняем очистку
+    cleanup_on_exit()
+    
+    # Принудительно завершаем приложение
+    sys.exit(1)
+
+
+def setup_signal_handlers():
+    """Настройка обработчиков системных сигналов"""
+    # Регистрируем обработчики сигналов (только для Unix-подобных систем)
+    if hasattr(signal, 'SIGTERM'):
+        signal.signal(signal.SIGTERM, signal_handler)
+    if hasattr(signal, 'SIGINT'):
+        signal.signal(signal.SIGINT, signal_handler)
+    
+    # Регистрируем функцию очистки для нормального завершения
+    atexit.register(cleanup_on_exit)
 
 
 def setup_environment():
@@ -31,6 +76,9 @@ def setup_environment():
     
     # Инициализация локализации
     get_localization()
+    
+    # Настройка обработчиков сигналов
+    setup_signal_handlers()
 
 
 def main():

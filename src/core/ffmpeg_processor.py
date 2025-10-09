@@ -5,7 +5,8 @@ import os
 import subprocess
 import json
 import re
-from typing import Dict, Any, Optional, Callable
+import psutil
+from typing import Dict, Any, Optional, Callable, List
 from pathlib import Path
 
 from src.core.logger import get_logger
@@ -15,10 +16,150 @@ from src.core.localization import get_localization, _
 class FFmpegProcessor:
     """Класс для работы с ffmpeg - обработка аудио и видео файлов"""
     
+    # Класс-переменная для отслеживания всех активных процессов FFmpeg
+    _active_processes = []
+    _process_lock = None
+    
     def __init__(self):
         self.logger = get_logger()
         self.ffmpeg_path = self._find_ffmpeg()
         self.ffprobe_path = self._find_ffprobe()
+        
+        # Инициализируем блокировку для потокобезопасности
+        if FFmpegProcessor._process_lock is None:
+            import threading
+            FFmpegProcessor._process_lock = threading.Lock()
+    
+    @classmethod
+    def terminate_all_processes(cls):
+        """Принудительно завершает все активные процессы FFmpeg"""
+        import threading
+        if cls._process_lock is None:
+            cls._process_lock = threading.Lock()
+            
+        with cls._process_lock:
+            logger = get_logger()
+            logger.info(f"Завершение {len(cls._active_processes)} активных процессов FFmpeg")
+            
+            # Сначала завершаем зарегистрированные процессы
+            for process in cls._active_processes[:]:  # Копируем список для безопасной итерации
+                try:
+                    cls._terminate_process_tree(process, logger)
+                    cls._active_processes.remove(process)
+                except Exception as e:
+                    logger.error(f"Ошибка при завершении процесса FFmpeg: {e}")
+                    try:
+                        cls._active_processes.remove(process)
+                    except ValueError:
+                        pass  # Процесс уже удален из списка
+            
+            # Дополнительно ищем и завершаем все процессы FFmpeg в системе
+            cls._terminate_orphaned_ffmpeg_processes(logger)
+            
+            logger.info("Завершение всех процессов FFmpeg завершено")
+    
+    @classmethod
+    def _terminate_process_tree(cls, process, logger):
+        """Завершает процесс и все его дочерние процессы"""
+        if process.poll() is not None:  # Процесс уже завершен
+            return
+            
+        try:
+            # Получаем дерево процессов
+            parent = psutil.Process(process.pid)
+            children = parent.children(recursive=True)
+            
+            logger.info(f"Завершение процесса FFmpeg PID: {process.pid} и {len(children)} дочерних процессов")
+            
+            # Сначала завершаем дочерние процессы
+            for child in children:
+                try:
+                    logger.debug(f"Завершение дочернего процесса PID: {child.pid}")
+                    child.terminate()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+            
+            # Завершаем основной процесс
+            process.terminate()
+            
+            # Ждем завершения
+            try:
+                process.wait(timeout=3)
+                logger.info(f"Процесс FFmpeg PID {process.pid} корректно завершен")
+            except subprocess.TimeoutExpired:
+                logger.warning(f"Процесс FFmpeg PID {process.pid} не отвечает, принудительно завершаем")
+                
+                # Принудительно завершаем дочерние процессы
+                for child in children:
+                    try:
+                        if child.is_running():
+                            child.kill()
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+                
+                # Принудительно завершаем основной процесс
+                process.kill()
+                process.wait()
+                logger.info(f"Процесс FFmpeg PID {process.pid} принудительно завершен")
+                
+        except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+            logger.debug(f"Процесс уже завершен или недоступен: {e}")
+        except Exception as e:
+            logger.error(f"Ошибка при завершении дерева процессов: {e}")
+            # Fallback к стандартному методу
+            try:
+                if process.poll() is None:
+                    process.terminate()
+                    process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+    
+    @classmethod
+    def _terminate_orphaned_ffmpeg_processes(cls, logger):
+        """Находит и завершает все оставшиеся процессы FFmpeg в системе"""
+        try:
+            orphaned_count = 0
+            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                try:
+                    proc_info = proc.info
+                    if proc_info['name'] and 'ffmpeg' in proc_info['name'].lower():
+                        logger.warning(f"Найден потерянный процесс FFmpeg PID: {proc_info['pid']}")
+                        proc.terminate()
+                        orphaned_count += 1
+                        
+                        # Ждем завершения
+                        try:
+                            proc.wait(timeout=2)
+                            logger.info(f"Потерянный процесс FFmpeg PID {proc_info['pid']} завершен")
+                        except psutil.TimeoutExpired:
+                            logger.warning(f"Принудительно завершаем потерянный процесс FFmpeg PID {proc_info['pid']}")
+                            proc.kill()
+                            
+                except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    continue
+                except Exception as e:
+                    logger.debug(f"Ошибка при проверке процесса: {e}")
+                    continue
+            
+            if orphaned_count > 0:
+                logger.info(f"Завершено {orphaned_count} потерянных процессов FFmpeg")
+                
+        except Exception as e:
+            logger.error(f"Ошибка при поиске потерянных процессов FFmpeg: {e}")
+    
+    def _register_process(self, process):
+        """Регистрирует процесс в списке активных"""
+        with self._process_lock:
+            self._active_processes.append(process)
+    
+    def _unregister_process(self, process):
+        """Удаляет процесс из списка активных"""
+        with self._process_lock:
+            try:
+                self._active_processes.remove(process)
+            except ValueError:
+                pass  # Процесс уже удален
         
     def _find_ffmpeg(self) -> Optional[str]:
         """Поиск исполняемого файла ffmpeg в системе"""
@@ -254,6 +395,57 @@ class FFmpegProcessor:
             self.logger.error(f"Ошибка извлечения видео: {str(e)}")
             raise RuntimeError(_("video_extraction_error").format(error=str(e)))
     
+    def _normalize_path(self, path: str) -> str:
+        """Нормализация пути файла для корректной работы с FFmpeg"""
+        if not path:
+            return path
+        
+        # Используем pathlib для нормализации пути
+        # При использовании subprocess.run() с массивом аргументов
+        # Python автоматически обрабатывает пробелы в пути
+        normalized_path = str(Path(path).resolve())
+        
+        return normalized_path
+
+    def _validate_options(self, options: Dict[str, Any]) -> Dict[str, Any]:
+        """Валидация и очистка параметров конвертации"""
+        validated_options = {}
+        
+        # Валидация видео кодека
+        if 'video_codec' in options and options['video_codec']:
+            validated_options['video_codec'] = options['video_codec']
+        
+        # Валидация битрейта видео
+        if 'video_bitrate' in options and options['video_bitrate'] and options['video_bitrate'] != 'auto':
+            validated_options['video_bitrate'] = options['video_bitrate']
+        
+        # Валидация разрешения
+        if 'resolution' in options and options['resolution'] and options['resolution'] != 'original':
+            validated_options['resolution'] = options['resolution']
+        
+        # Валидация аудио кодека
+        if 'audio_codec' in options and options['audio_codec']:
+            validated_options['audio_codec'] = options['audio_codec']
+        
+        # Валидация битрейта аудио
+        if 'audio_bitrate' in options and options['audio_bitrate'] and options['audio_bitrate'] != 'auto':
+            validated_options['audio_bitrate'] = options['audio_bitrate']
+        
+        # Валидация пресета
+        if 'preset' in options and options['preset']:
+            validated_options['preset'] = options['preset']
+        
+        # Валидация CRF
+        if 'crf' in options and options['crf'] is not None:
+            try:
+                crf_value = int(options['crf'])
+                if 0 <= crf_value <= 51:
+                    validated_options['crf'] = crf_value
+            except (ValueError, TypeError):
+                self.logger.warning(f"Некорректное значение CRF: {options['crf']}")
+        
+        return validated_options
+
     def convert_file(self, input_file: str, output_file: str, options: Dict[str, Any],
                     progress_callback: Optional[Callable[[float, str], None]] = None) -> bool:
         """Конвертация медиафайла с заданными параметрами"""
@@ -261,31 +453,38 @@ class FFmpegProcessor:
             raise RuntimeError(_("ffmpeg_not_found"))
         
         try:
+            # Нормализуем пути файлов
+            input_file = self._normalize_path(input_file)
+            output_file = self._normalize_path(output_file)
+            
+            # Валидируем параметры
+            validated_options = self._validate_options(options)
+            
             cmd = [self.ffmpeg_path, '-i', input_file]
             
             # Добавляем параметры видео
-            if 'video_codec' in options:
-                cmd.extend(['-c:v', options['video_codec']])
+            if 'video_codec' in validated_options:
+                cmd.extend(['-c:v', validated_options['video_codec']])
             
-            if 'video_bitrate' in options:
-                cmd.extend(['-b:v', options['video_bitrate']])
+            if 'video_bitrate' in validated_options:
+                cmd.extend(['-b:v', validated_options['video_bitrate']])
             
-            if 'resolution' in options and options['resolution'] != 'original':
-                cmd.extend(['-s', options['resolution']])
+            if 'resolution' in validated_options:
+                cmd.extend(['-s', validated_options['resolution']])
             
             # Добавляем параметры аудио
-            if 'audio_codec' in options:
-                cmd.extend(['-c:a', options['audio_codec']])
+            if 'audio_codec' in validated_options:
+                cmd.extend(['-c:a', validated_options['audio_codec']])
             
-            if 'audio_bitrate' in options:
-                cmd.extend(['-b:a', options['audio_bitrate']])
+            if 'audio_bitrate' in validated_options:
+                cmd.extend(['-b:a', validated_options['audio_bitrate']])
             
             # Дополнительные параметры
-            if 'preset' in options:
-                cmd.extend(['-preset', options['preset']])
+            if 'preset' in validated_options:
+                cmd.extend(['-preset', validated_options['preset']])
             
-            if 'crf' in options:
-                cmd.extend(['-crf', str(options['crf'])])
+            if 'crf' in validated_options:
+                cmd.extend(['-crf', str(validated_options['crf'])])
             
             cmd.extend(['-y', output_file])
             
@@ -334,6 +533,8 @@ class FFmpegProcessor:
                 raise ValueError("Некорректная команда FFmpeg")
             
             self.logger.debug(f"Запуск процесса FFmpeg: {' '.join(cmd)}")
+            self.logger.debug(f"Входной файл: {input_file}")
+            self.logger.debug(f"Выходной файл: {output_file if 'output_file' in locals() else 'не определен'}")
             
             process = subprocess.Popen(
                 cmd,
@@ -342,6 +543,9 @@ class FFmpegProcessor:
                 universal_newlines=True,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
             )
+            
+            # Регистрируем процесс для отслеживания
+            self._register_process(process)
             
             # Читаем вывод ffmpeg для отслеживания прогресса
             stderr_output = []
@@ -388,8 +592,21 @@ class FFmpegProcessor:
                     stderr_output.append(remaining_stderr.strip())
                 
                 error_output = '\n'.join(stderr_output[-10:])  # Последние 10 строк
-                self.logger.error(f"FFmpeg завершился с кодом {return_code}: {error_output}")
-                raise RuntimeError(_("ffmpeg_process_error").format(error=error_output))
+                self.logger.error(f"FFmpeg завершился с кодом {return_code}")
+                self.logger.error(f"Команда: {' '.join(cmd)}")
+                self.logger.error(f"Вывод ошибки: {error_output}")
+                
+                # Анализируем тип ошибки для более понятного сообщения
+                if "No such file or directory" in error_output:
+                    raise RuntimeError("Файл не найден или недоступен")
+                elif "Permission denied" in error_output:
+                    raise RuntimeError("Недостаточно прав доступа к файлу")
+                elif "Invalid argument" in error_output or "Undefined constant" in error_output:
+                    raise RuntimeError("Некорректные параметры конвертации")
+                elif "Codec" in error_output and "not found" in error_output:
+                    raise RuntimeError("Кодек не найден или не поддерживается")
+                else:
+                    raise RuntimeError(f"Ошибка FFmpeg (код {return_code}): {error_output}")
                 
         except subprocess.TimeoutExpired:
             self.logger.error("Превышено время ожидания выполнения FFmpeg")
@@ -405,6 +622,23 @@ class FFmpegProcessor:
                 except subprocess.TimeoutExpired:
                     process.kill()
             raise
+        finally:
+            # Удаляем процесс из списка активных
+            if process:
+                self._unregister_process(process)
+            
+            # Гарантированно завершаем процесс, если он еще работает
+            if process and process.poll() is None:
+                self.logger.info("Принудительно завершаем процесс FFmpeg")
+                try:
+                    process.terminate()
+                    process.wait(timeout=5)
+                    self.logger.info("Процесс FFmpeg корректно завершен")
+                except subprocess.TimeoutExpired:
+                    self.logger.warning("Процесс FFmpeg не отвечает, принудительно завершаем")
+                    process.kill()
+                    process.wait()
+                    self.logger.info("Процесс FFmpeg принудительно завершен")
     
     def get_supported_formats(self) -> Dict[str, list]:
         """Получение списка поддерживаемых форматов"""

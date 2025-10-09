@@ -8,20 +8,20 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
     QPushButton, QComboBox, QFileDialog, QMessageBox, QFrame,
     QCheckBox, QSlider, QSpinBox, QGroupBox, QDialog, QTextEdit,
-    QScrollArea
+    QScrollArea, QProgressBar
 )
-from PySide6.QtCore import Qt, Signal, QThread
+from PySide6.QtCore import Qt, Signal
 
 from src.core.ffmpeg_processor import FFmpegProcessor
 from src.core.logger import get_logger
 from src.core.localization import get_localization, _
+from src.core.thread_manager import thread_manager
+from src.core.base_worker import BaseWorker
 
 
-class ConversionWorker(QThread):
+class ConversionWorker(BaseWorker):
     """Рабочий поток для конвертации файлов"""
-    progress_updated = Signal(float, str)
     processing_finished = Signal(bool, str)
-    error = Signal(str)
     
     def __init__(self, input_file: str, output_file: str, conversion_options: Dict[str, Any]):
         super().__init__()
@@ -29,19 +29,39 @@ class ConversionWorker(QThread):
         self.output_file = output_file
         self.conversion_options = conversion_options
         self.processor = FFmpegProcessor()
-        self.logger = get_logger()
         self.localization = get_localization()
+        # Регистрируем FFmpeg процессор для очистки
+        self.add_resource_for_cleanup(self.processor, self._cleanup_processor)
     
-    def run(self):
+    def work(self):
+        """Основная логика конвертации файлов"""
         try:
+            if self.check_cancelled():
+                return
+                
             self.logger.info(f"Начало конвертации: {self.input_file} -> {self.output_file}")
             
+            # Проверяем существование входного файла
+            if not os.path.exists(self.input_file):
+                raise FileNotFoundError(f"Входной файл не найден: {self.input_file}")
+            
+            # Проверяем доступность выходной директории
+            output_dir = os.path.dirname(self.output_file)
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir, exist_ok=True)
+
+            if self._should_stop:
+                return
+
             success = self.processor.convert_file(
                 self.input_file,
                 self.output_file,
-                **self.conversion_options,
+                self.conversion_options,
                 progress_callback=self.progress_updated.emit
             )
+            
+            if self._should_stop:
+                return
             
             if success:
                 self.logger.info("Конвертация завершена успешно")
@@ -49,11 +69,37 @@ class ConversionWorker(QThread):
                     filename=os.path.basename(self.output_file)
                 ))
             else:
+                self.logger.error("Конвертация завершилась неудачно")
                 self.error.emit(self.localization.get_text("conversion_failed"))
                 
+        except FileNotFoundError as e:
+            if not self._should_stop:
+                self.logger.error(f"Файл не найден: {str(e)}")
+                self.error.emit(f"Файл не найден: {str(e)}")
+        except PermissionError as e:
+            if not self._should_stop:
+                self.logger.error(f"Недостаточно прав доступа: {str(e)}")
+                self.error.emit(f"Недостаточно прав доступа: {str(e)}")
+        except RuntimeError as e:
+            if not self._should_stop:
+                self.logger.error(f"Ошибка FFmpeg: {str(e)}")
+                self.error.emit(f"Ошибка конвертации: {str(e)}")
         except Exception as e:
-            self.logger.error(f"Ошибка конвертации: {str(e)}")
-            self.error.emit(str(e))
+            if not self._should_stop:
+                self.logger.error(f"Неожиданная ошибка конвертации: {str(e)}")
+                self.error.emit(f"Неожиданная ошибка: {str(e)}")
+    
+    def _cleanup_processor(self):
+        """Очистка ресурсов FFmpegProcessor"""
+        if self.processor:
+            try:
+                # Останавливаем все активные процессы FFmpeg
+                self.processor.terminate_all_processes()
+                self.logger.debug("Ресурсы FFmpegProcessor очищены")
+            except Exception as e:
+                self.logger.warning(f"Ошибка при очистке FFmpegProcessor: {e}")
+            finally:
+                self.processor = None
 
 
 class ConversionTab(QWidget):
@@ -716,6 +762,8 @@ class ConversionTab(QWidget):
                 conversion_options
             )
             
+            # Автоматическая регистрация потока происходит в BaseWorker.start()
+            
             # Подключаем сигналы
             self.worker.progress_updated.connect(self.on_progress_updated)
             self.worker.processing_finished.connect(self.on_processing_finished)
@@ -735,7 +783,6 @@ class ConversionTab(QWidget):
     
     def on_progress_updated(self, progress: float, status: str):
         """Обработка обновления прогресса"""
-        # Этот сигнал будет подключен к прогресс-бару в главном окне
         pass
     
     def on_processing_finished(self, success: bool, message: str):
@@ -750,6 +797,7 @@ class ConversionTab(QWidget):
         """Обработка ошибки конвертации"""
         self.worker = None
         self.set_ui_enabled(True)
+        
         QMessageBox.critical(self, self.localization.get_text("error"), error_message)
     
     def set_ui_enabled(self, enabled: bool):

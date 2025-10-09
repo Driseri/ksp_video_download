@@ -6,6 +6,7 @@
   "browse_button": "Обзор",
   "download_button": "Загрузить",
   "cancel_button": "Отмена",
+  "download_settings": "Настройки загрузки",
   "status_ready": "Готов к загрузке",
   "status_downloading": "Загрузка: {progress}% - {speed} - Осталось: {eta}",
   "status_complete": "Загрузка завершена: {filename}",
@@ -69,6 +70,7 @@
   "video_bitrate_label": "Битрейт видео:",
   "audio_bitrate_label": "Битрейт аудио:",
   "convert_button": "Конвертировать",
+  "start_conversion": "Начать конвертацию",
   "original_resolution": "Оригинальное",
   "custom_resolution": "Пользовательское",
   "auto_codec": "Авто",
@@ -108,5 +110,35 @@
   "file_not_found": "Файл не найден: {file}",
   "audio_extraction_error": "Ошибка извлечения аудио: {error}",
   "video_extraction_error": "Ошибка извлечения видео: {error}",
-  "ffmpeg_not_found": "FFmpeg не найден в системе"
+  "ffmpeg_not_found": "FFmpeg не найден в системе",
+  
+  "error_download_failed": "Ошибка загрузки видео",
+  "error_no_video_info": "Не удалось получить информацию о видео",
+  "error_empty_url": "Введите URL видео",
+  "error_empty_save_path": "Выберите путь для сохранения",
+  
+  "ffprobe_not_found": "FFprobe не найден в системе",
+  "ffprobe_error": "Ошибка FFprobe: {error}",
+  "ffprobe_timeout": "Превышено время ожидания FFprobe",
+  "ffprobe_json_error": "Ошибка парсинга JSON от FFprobe",
+  "ffprobe_general_error": "Общая ошибка FFprobe: {error}",
+  "conversion_error": "Ошибка конвертации: {error}",
+  "processing_progress": "Обработка: {progress}",
+  "processing_complete": "Обработка завершена",
+  "ffmpeg_timeout_error": "Превышено время ожидания FFmpeg",
+  
+  "unit_bytes": "байт",
+  "unit_kb": "КБ",
+  "unit_mb": "МБ", 
+  "unit_gb": "ГБ",
+  "unit_tb": "ТБ",
+  "unit_pb": "ПБ",
+  
+  "time_seconds": "{seconds} сек",
+  "time_minutes_seconds": "{minutes} мин {seconds} сек",
+  "time_hours_minutes": "{hours} ч {minutes} мин",
+  
+  "language_switch": "Переключатель языка",
+  "dialog_title_warning": "Предупреждение",
+  "copy_original": "Копировать оригинал"
 }

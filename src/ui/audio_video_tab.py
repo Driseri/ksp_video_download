@@ -9,18 +9,18 @@ from PySide6.QtWidgets import (
     QPushButton, QComboBox, QRadioButton, QButtonGroup, 
     QFileDialog, QMessageBox, QFrame
 )
-from PySide6.QtCore import Qt, Signal, QThread
+from PySide6.QtCore import Qt, Signal
 
 from src.core.ffmpeg_processor import FFmpegProcessor
 from src.core.logger import get_logger
 from src.core.localization import get_localization, _
+from src.core.thread_manager import thread_manager
+from src.core.base_worker import BaseWorker
 
 
-class AudioVideoWorker(QThread):
+class AudioVideoWorker(BaseWorker):
     """Рабочий поток для обработки аудио/видео"""
-    progress_updated = Signal(float, str)
     processing_finished = Signal(bool, str)
-    error = Signal(str)
     
     def __init__(self, input_file: str, output_file: str, operation: str, 
                  format_type: str = 'mp3', quality: str = '192k'):
@@ -31,10 +31,15 @@ class AudioVideoWorker(QThread):
         self.format_type = format_type
         self.quality = quality
         self.processor = FFmpegProcessor()
-        self.logger = get_logger()
+        # Регистрируем FFmpeg процессор для очистки
+        self.add_resource_for_cleanup(self.processor, self._cleanup_processor)
     
-    def run(self):
+    def work(self):
+        """Основная логика обработки аудио/видео"""
         try:
+            if self.check_cancelled():
+                return
+                
             self.logger.info(f"Начало операции {self.operation}: {self.input_file}")
             
             # Валидация входных данных
@@ -64,6 +69,9 @@ class AudioVideoWorker(QThread):
             if not os.access(output_dir, os.W_OK):
                 raise PermissionError(f"Нет прав на запись в директорию: {output_dir}")
             
+            if self._should_stop:
+                return
+            
             if self.operation == 'extract_audio':
                 success = self.processor.extract_audio(
                     self.input_file, 
@@ -80,6 +88,9 @@ class AudioVideoWorker(QThread):
                 )
             else:
                 raise ValueError(f"Неизвестная операция: {self.operation}")
+            
+            if self._should_stop:
+                return
             
             if success:
                 # Дополнительная проверка результата
@@ -98,17 +109,33 @@ class AudioVideoWorker(QThread):
                 self.error.emit(_("processing_failed"))
                 
         except FileNotFoundError as e:
-            self.logger.error(f"Файл не найден: {str(e)}")
-            self.error.emit(_("file_not_found").format(file=str(e)))
+            if not self._should_stop:
+                self.logger.error(f"Файл не найден: {str(e)}")
+                self.error.emit(_("file_not_found").format(file=str(e)))
         except PermissionError as e:
-            self.logger.error(f"Ошибка доступа: {str(e)}")
-            self.error.emit(f"Ошибка доступа: {str(e)}")
+            if not self._should_stop:
+                self.logger.error(f"Ошибка доступа: {str(e)}")
+                self.error.emit(f"Ошибка доступа: {str(e)}")
         except ValueError as e:
-            self.logger.error(f"Ошибка валидации: {str(e)}")
-            self.error.emit(f"Ошибка валидации: {str(e)}")
+            if not self._should_stop:
+                self.logger.error(f"Ошибка валидации: {str(e)}")
+                self.error.emit(f"Ошибка валидации: {str(e)}")
         except Exception as e:
-            self.logger.error(f"Ошибка операции {self.operation}: {str(e)}")
-            self.error.emit(str(e))
+            if not self._should_stop:
+                self.logger.error(f"Ошибка операции {self.operation}: {str(e)}")
+                self.error.emit(str(e))
+    
+    def _cleanup_processor(self):
+        """Очистка ресурсов FFmpegProcessor"""
+        if self.processor:
+            try:
+                # Останавливаем все активные процессы FFmpeg
+                self.processor.terminate_all_processes()
+                self.logger.debug("Ресурсы FFmpegProcessor очищены")
+            except Exception as e:
+                self.logger.warning(f"Ошибка при очистке FFmpegProcessor: {e}")
+            finally:
+                self.processor = None
 
 
 class AudioVideoTab(QWidget):
@@ -327,7 +354,7 @@ class AudioVideoTab(QWidget):
             }
         """)
         self.process_button.setFixedHeight(40)
-        self.process_button.setFixedWidth(160)
+        self.process_button.setFixedWidth(184)  # Увеличено на 15% (160 * 1.15 = 184)
         self.process_button.setEnabled(False)
         
         process_layout.addWidget(self.process_button)
@@ -488,10 +515,12 @@ class AudioVideoTab(QWidget):
                 quality
             )
             
+            # Автоматическая регистрация потока происходит в BaseWorker.start()
+            
             # Подключаем сигналы
-            self.worker.progress_updated.connect(self.on_progress_updated)
-            self.worker.processing_finished.connect(self.on_processing_finished)
-            self.worker.error.connect(self.on_processing_error)
+            self.worker.progress_updated.connect(self.update_progress)
+            self.worker.processing_finished.connect(self.processing_finished)
+            self.worker.error.connect(self.processing_error)
             
             # Запускаем обработку
             self.worker.start()
@@ -500,20 +529,22 @@ class AudioVideoTab(QWidget):
         except Exception as e:
             QMessageBox.critical(self, _("error"), str(e))
     
-    def on_progress_updated(self, progress: float, status: str):
-        """Обработка обновления прогресса"""
-        # Этот сигнал будет подключен к прогресс-бару в главном окне
-        pass
+    def update_progress(self, progress, status):
+        """Обновление прогресса обработки"""
+        pass  # Прогресс-бар удален
     
-    def on_processing_finished(self, success: bool, message: str):
-        """Обработка завершения операции"""
-        self.set_ui_enabled(True)
+    def processing_finished(self, success, message):
+        """Завершение обработки"""
+        self.process_button.setEnabled(True)
+        
         if success:
             QMessageBox.information(self, _("success"), message)
-        
-    def on_processing_error(self, error_message: str):
-        """Обработка ошибки операции"""
-        self.set_ui_enabled(True)
+        else:
+            QMessageBox.critical(self, _("error"), message)
+    
+    def processing_error(self, error_message):
+        """Обработка ошибки"""
+        self.process_button.setEnabled(True)
         QMessageBox.critical(self, _("error"), error_message)
     
     def set_ui_enabled(self, enabled: bool):

@@ -6,6 +6,7 @@
   "browse_button": "Browse",
   "download_button": "Download",
   "cancel_button": "Cancel",
+  "download_settings": "Download Settings",
   "status_ready": "Ready to download",
   "status_downloading": "Downloading: {progress}% - {speed} - ETA: {eta}",
   "status_complete": "Download complete: {filename}",
@@ -69,6 +70,7 @@
   "video_bitrate_label": "Video bitrate:",
   "audio_bitrate_label": "Audio bitrate:",
   "convert_button": "Convert",
+  "start_conversion": "Start Conversion",
   "original_resolution": "Original",
   "custom_resolution": "Custom",
   "auto_codec": "Auto",
@@ -108,5 +110,35 @@
   "file_not_found": "File not found: {file}",
   "audio_extraction_error": "Audio extraction error: {error}",
   "video_extraction_error": "Video extraction error: {error}",
-  "ffmpeg_not_found": "FFmpeg not found in system"
+  "ffmpeg_not_found": "FFmpeg not found in system",
+  
+  "error_download_failed": "Video download failed",
+  "error_no_video_info": "Could not get video information",
+  "error_empty_url": "Please enter video URL",
+  "error_empty_save_path": "Please select save path",
+  
+  "ffprobe_not_found": "FFprobe not found in system",
+  "ffprobe_error": "FFprobe error: {error}",
+  "ffprobe_timeout": "FFprobe timeout exceeded",
+  "ffprobe_json_error": "FFprobe JSON parsing error",
+  "ffprobe_general_error": "General FFprobe error: {error}",
+  "conversion_error": "Conversion error: {error}",
+  "processing_progress": "Processing: {progress}",
+  "processing_complete": "Processing complete",
+  "ffmpeg_timeout_error": "FFmpeg timeout exceeded",
+  
+  "unit_bytes": "bytes",
+  "unit_kb": "KB",
+  "unit_mb": "MB", 
+  "unit_gb": "GB",
+  "unit_tb": "TB",
+  "unit_pb": "PB",
+  
+  "time_seconds": "{seconds} sec",
+  "time_minutes_seconds": "{minutes} min {seconds} sec",
+  "time_hours_minutes": "{hours} h {minutes} min",
+  
+  "language_switch": "Language switch",
+  "dialog_title_warning": "Warning",
+  "copy_original": "Copy original"
 }
