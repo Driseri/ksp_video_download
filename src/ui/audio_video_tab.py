@@ -7,7 +7,7 @@ from typing import Optional
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
     QPushButton, QComboBox, QRadioButton, QButtonGroup, 
-    QFileDialog, QMessageBox, QFrame
+    QFileDialog, QMessageBox, QFrame, QGroupBox
 )
 from PySide6.QtCore import Qt, Signal
 
@@ -160,169 +160,186 @@ class AudioVideoTab(QWidget):
     def setup_ui(self):
         """Настройка пользовательского интерфейса"""
         layout = QVBoxLayout(self)
-        layout.setSpacing(12)
-        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(15)
+        layout.setContentsMargins(20, 20, 20, 20)
         
-        # Выбор исходного файла
+        # Группа для входных файлов
+        input_group = QGroupBox(_("input_files"))
+        input_layout = QVBoxLayout(input_group)
+        input_layout.setSpacing(10)
+        
+        # Выбор файла
         file_layout = QHBoxLayout()
-        file_label = QLabel(_("source_file_label"))
+        file_label = QLabel(_("source_file"))
         file_label.setFixedWidth(120)
-        file_label.setFixedHeight(30)
-        
+        file_label.setFixedHeight(32)
         self.file_input = QLineEdit()
-        self.file_input.setPlaceholderText(_("select_video_file_hint"))
-        self.file_input.setFixedHeight(30)
         self.file_input.setReadOnly(True)
-        
+        self.file_input.setFixedHeight(32)
         self.browse_file_button = QPushButton(_("browse_button"))
-        self.browse_file_button.setFixedHeight(30)
+        self.browse_file_button.setFixedHeight(32)
         self.browse_file_button.setFixedWidth(100)
         
         file_layout.addWidget(file_label)
         file_layout.addWidget(self.file_input)
         file_layout.addWidget(self.browse_file_button)
-        layout.addLayout(file_layout)
+        input_layout.addLayout(file_layout)
         
         # Информация о файле
         self.file_info_frame = QFrame()
         self.file_info_frame.setFrameShape(QFrame.StyledPanel)
-        self.file_info_frame.setFixedHeight(60)
+        self.file_info_frame.setFrameShadow(QFrame.Raised)
         self.file_info_frame.setStyleSheet("""
             QFrame {
-                border: 1px solid #ccc;
+                background-color: #f8f9fa;
+                border: 1px solid #dee2e6;
                 border-radius: 4px;
-                background-color: #f9f9f9;
-                padding: 5px;
+                padding: 8px;
             }
         """)
         
         info_layout = QVBoxLayout(self.file_info_frame)
-        info_layout.setContentsMargins(10, 5, 10, 5)
-        
+        info_layout.setContentsMargins(10, 10, 10, 10)
         self.file_info_label = QLabel(_("no_file_selected"))
-        self.file_info_label.setStyleSheet("color: #666; font-size: 11px;")
+        self.file_info_label.setWordWrap(True)
+        self.file_info_label.setStyleSheet("color: #6c757d; font-size: 12px; font-weight: bold;")
         info_layout.addWidget(self.file_info_label)
         
-        layout.addWidget(self.file_info_frame)
+        input_layout.addWidget(self.file_info_frame)
+        layout.addWidget(input_group)
+        
+        # Разделитель
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(separator)
+        
+        # Группа для настроек операции
+        operation_group = QGroupBox(_("operation_settings"))
+        operation_layout = QVBoxLayout(operation_group)
+        operation_layout.setSpacing(10)
         
         # Выбор операции
-        operation_layout = QVBoxLayout()
-        operation_label = QLabel(_("operation_label"))
-        operation_label.setStyleSheet("font-weight: bold; margin-bottom: 5px;")
-        operation_layout.addWidget(operation_label)
-        
+        operation_selection_layout = QHBoxLayout()
         self.operation_group = QButtonGroup()
         
-        self.extract_audio_radio = QRadioButton(_("extract_audio_only"))
+        self.extract_audio_radio = QRadioButton(_("extract_audio"))
         self.extract_audio_radio.setChecked(True)
-        self.operation_group.addButton(self.extract_audio_radio, 0)
+        self.extract_video_radio = QRadioButton(_("extract_video"))
         
-        self.extract_video_radio = QRadioButton(_("extract_video_only"))
-        self.operation_group.addButton(self.extract_video_radio, 1)
+        self.operation_group.addButton(self.extract_audio_radio)
+        self.operation_group.addButton(self.extract_video_radio)
         
-        operation_layout.addWidget(self.extract_audio_radio)
-        operation_layout.addWidget(self.extract_video_radio)
-        layout.addLayout(operation_layout)
+        operation_selection_layout.addWidget(self.extract_audio_radio)
+        operation_selection_layout.addWidget(self.extract_video_radio)
+        operation_selection_layout.addStretch()
+        operation_layout.addLayout(operation_selection_layout)
         
         # Настройки аудио (показываются только при извлечении аудио)
         self.audio_settings_frame = QFrame()
         audio_settings_layout = QVBoxLayout(self.audio_settings_frame)
         audio_settings_layout.setContentsMargins(0, 10, 0, 0)
         
-        # Формат аудио
-        audio_format_layout = QHBoxLayout()
-        audio_format_label = QLabel(_("audio_format_label"))
-        audio_format_label.setFixedWidth(120)
-        audio_format_label.setFixedHeight(30)
-        
+        # Формат аудио с кнопкой помощи
+        format_layout = QHBoxLayout()
+        format_label = QLabel(_("audio_format"))
+        format_label.setFixedWidth(120)
+        format_label.setFixedHeight(32)
         self.audio_format_combo = QComboBox()
         self.audio_format_combo.addItem("MP3", "mp3")
         self.audio_format_combo.addItem("AAC", "aac")
         self.audio_format_combo.addItem("FLAC", "flac")
         self.audio_format_combo.addItem("WAV", "wav")
-        self.audio_format_combo.setFixedHeight(30)
+        self.audio_format_combo.setFixedHeight(32)
         
-        # Кнопка помощи для формата
+        # Стилизованная кнопка помощи
         self.format_help_button = QPushButton("?")
-        self.format_help_button.setFixedSize(25, 25)
+        self.format_help_button.setFixedSize(32, 32)
         self.format_help_button.setStyleSheet("""
             QPushButton {
-                border: 1px solid #ccc;
-                border-radius: 12px;
-                background-color: #f0f0f0;
+                background-color: #28a745;
+                color: white;
+                border: none;
+                border-radius: 16px;
                 font-weight: bold;
-                font-size: 12px;
+                font-size: 14px;
             }
             QPushButton:hover {
-                background-color: #e0e0e0;
+                background-color: #218838;
+            }
+            QPushButton:pressed {
+                background-color: #1e7e34;
             }
         """)
-        self.format_help_button.setToolTip("Нажмите для получения справки по форматам аудио")
+        self.format_help_button.setToolTip(_("format_help_tooltip"))
         
-        audio_format_layout.addWidget(audio_format_label)
-        audio_format_layout.addWidget(self.audio_format_combo)
-        audio_format_layout.addWidget(self.format_help_button)
-        audio_format_layout.addStretch()
-        audio_settings_layout.addLayout(audio_format_layout)
+        format_layout.addWidget(format_label)
+        format_layout.addWidget(self.audio_format_combo)
+        format_layout.addWidget(self.format_help_button)
+        format_layout.addStretch()
+        audio_settings_layout.addLayout(format_layout)
         
-        # Качество аудио
-        audio_quality_layout = QHBoxLayout()
-        audio_quality_label = QLabel(_("audio_quality_label"))
-        audio_quality_label.setFixedWidth(120)
-        audio_quality_label.setFixedHeight(30)
-        
+        # Качество аудио с кнопкой помощи
+        quality_layout = QHBoxLayout()
+        quality_label = QLabel(_("audio_quality"))
+        quality_label.setFixedWidth(120)
+        quality_label.setFixedHeight(32)
         self.audio_quality_combo = QComboBox()
-        self.audio_quality_combo.addItem("320 kbps", "320k")
-        self.audio_quality_combo.addItem("256 kbps", "256k")
-        self.audio_quality_combo.addItem("192 kbps", "192k")
-        self.audio_quality_combo.addItem("128 kbps", "128k")
-        self.audio_quality_combo.addItem("96 kbps", "96k")
-        self.audio_quality_combo.setCurrentText("192 kbps")
-        self.audio_quality_combo.setFixedHeight(30)
+        self.audio_quality_combo.setFixedHeight(32)
         
-        # Кнопка помощи для качества
+        # Стилизованная кнопка помощи
         self.quality_help_button = QPushButton("?")
-        self.quality_help_button.setFixedSize(25, 25)
+        self.quality_help_button.setFixedSize(32, 32)
         self.quality_help_button.setStyleSheet("""
             QPushButton {
-                border: 1px solid #ccc;
-                border-radius: 12px;
-                background-color: #f0f0f0;
+                background-color: #28a745;
+                color: white;
+                border: none;
+                border-radius: 16px;
                 font-weight: bold;
-                font-size: 12px;
+                font-size: 14px;
             }
             QPushButton:hover {
-                background-color: #e0e0e0;
+                background-color: #218838;
+            }
+            QPushButton:pressed {
+                background-color: #1e7e34;
             }
         """)
-        self.quality_help_button.setToolTip("Нажмите для получения справки по качеству аудио")
+        self.quality_help_button.setToolTip(_("quality_help_tooltip"))
         
-        audio_quality_layout.addWidget(audio_quality_label)
-        audio_quality_layout.addWidget(self.audio_quality_combo)
-        audio_quality_layout.addWidget(self.quality_help_button)
-        audio_quality_layout.addStretch()
-        audio_settings_layout.addLayout(audio_quality_layout)
+        quality_layout.addWidget(quality_label)
+        quality_layout.addWidget(self.audio_quality_combo)
+        quality_layout.addWidget(self.quality_help_button)
+        quality_layout.addStretch()
+        audio_settings_layout.addLayout(quality_layout)
         
-        layout.addWidget(self.audio_settings_frame)
+        operation_layout.addWidget(self.audio_settings_frame)
+        layout.addWidget(operation_group)
+        
+        # Группа для пути сохранения
+        output_group = QGroupBox(_("output_settings"))
+        output_layout = QVBoxLayout(output_group)
+        output_layout.setSpacing(10)
         
         # Путь сохранения
         save_layout = QHBoxLayout()
-        save_label = QLabel(_("save_path_label"))
+        save_label = QLabel(_("save_path"))
         save_label.setFixedWidth(120)
-        save_label.setFixedHeight(30)
-        
+        save_label.setFixedHeight(32)
         self.save_path_input = QLineEdit()
-        self.save_path_input.setFixedHeight(30)
+        self.save_path_input.setFixedHeight(32)
         self.save_path_input.setReadOnly(True)
-        
         self.browse_save_button = QPushButton(_("browse_button"))
-        self.browse_save_button.setFixedHeight(30)
+        self.browse_save_button.setFixedHeight(32)
         self.browse_save_button.setFixedWidth(100)
         
         save_layout.addWidget(save_label)
         save_layout.addWidget(self.save_path_input)
         save_layout.addWidget(self.browse_save_button)
-        layout.addLayout(save_layout)
+        output_layout.addLayout(save_layout)
+        
+        layout.addWidget(output_group)
         
         # Растягивающийся пробел
         layout.addStretch()
@@ -354,7 +371,7 @@ class AudioVideoTab(QWidget):
             }
         """)
         self.process_button.setFixedHeight(40)
-        self.process_button.setFixedWidth(184)  # Увеличено на 15% (160 * 1.15 = 184)
+        self.process_button.setFixedWidth(160)
         self.process_button.setEnabled(False)
         
         process_layout.addWidget(self.process_button)
@@ -568,76 +585,33 @@ class AudioVideoTab(QWidget):
     def _format_duration(self, seconds: float) -> str:
         """Форматирование длительности"""
         if seconds < 60:
-            return f"{int(seconds)}с"
+            return f"{int(seconds)}{_('seconds_short')}"
         elif seconds < 3600:
             minutes = int(seconds // 60)
             secs = int(seconds % 60)
-            return f"{minutes}м {secs}с"
+            return f"{minutes}{_('minutes_short')} {secs}{_('seconds_short')}"
         else:
             hours = int(seconds // 3600)
             minutes = int((seconds % 3600) // 60)
-            return f"{hours}ч {minutes}м"
+            return f"{hours}{_('hours_short')} {minutes}{_('minutes_short')}"
     
     def _format_size(self, bytes_size: int) -> str:
         """Форматирование размера файла"""
-        for unit in ['Б', 'КБ', 'МБ', 'ГБ']:
+        units = [_('bytes_unit'), _('kilobytes_unit'), _('megabytes_unit'), _('gigabytes_unit')]
+        for unit in units:
             if bytes_size < 1024.0:
                 return f"{bytes_size:.1f} {unit}"
             bytes_size /= 1024.0
-        return f"{bytes_size:.1f} ТБ"
+        return f"{bytes_size:.1f} {_('terabytes_unit')}"
     
     def show_format_help(self):
         """Показ справки по форматам аудио"""
-        help_text = """
-<b>Форматы аудио:</b><br><br>
-
-<b>MP3</b> - Самый популярный формат<br>
-• Хорошее сжатие и качество<br>
-• Поддерживается всеми устройствами<br>
-• Рекомендуется для общего использования<br><br>
-
-<b>AAC</b> - Современный формат<br>
-• Лучшее качество при том же размере, чем MP3<br>
-• Используется в iTunes и YouTube<br>
-• Хорошо подходит для мобильных устройств<br><br>
-
-<b>FLAC</b> - Без потерь качества<br>
-• Сохраняет оригинальное качество<br>
-• Большой размер файлов<br>
-• Для аудиофилов и архивирования<br><br>
-
-<b>WAV</b> - Несжатый формат<br>
-• Максимальное качество<br>
-• Очень большие файлы<br>
-• Для профессиональной работы
-        """
+        help_text = _("audio_format_help")
         
-        QMessageBox.information(self, "Справка по форматам", help_text)
+        QMessageBox.information(self, _("format_help_tooltip"), help_text)
     
     def show_quality_help(self):
         """Показ справки по качеству аудио"""
-        help_text = """
-<b>Качество аудио (битрейт):</b><br><br>
-
-<b>96 kbps</b> - Низкое качество<br>
-• Для речи и подкастов<br>
-• Минимальный размер файла<br><br>
-
-<b>128 kbps</b> - Приемлемое качество<br>
-• Для фоновой музыки<br>
-• Экономия места<br><br>
-
-<b>192 kbps</b> - Хорошее качество (рекомендуется)<br>
-• Оптимальный баланс качества и размера<br>
-• Подходит для большинства случаев<br><br>
-
-<b>256 kbps</b> - Высокое качество<br>
-• Для качественного прослушивания<br>
-• Заметно больший размер<br><br>
-
-<b>320 kbps</b> - Максимальное качество<br>
- • Практически неотличимо от CD<br>
- • Самые большие файлы
-        """
+        help_text = _("audio_quality_help")
         
-        QMessageBox.information(self, "Справка по качеству", help_text)
+        QMessageBox.information(self, _("quality_help_tooltip"), help_text)

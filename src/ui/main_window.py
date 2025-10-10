@@ -58,10 +58,10 @@ class DownloadWorker(BaseWorker):
                 return
                 
             if not self.output_path or not self.output_path.strip():
-                self.error.emit("Путь для сохранения не может быть пустым")
+                self.error.emit(_("empty_save_path_error"))
                 return
             
-            self.logger.info(f"Начало загрузки видео: {self.url}")
+            self.logger.info(_("download_start_log").format(url=self.url))
             self.logger.info(f"ID формата: {self.format_id}, путь сохранения: {self.output_path}")
             
             if self.check_cancelled():
@@ -105,28 +105,28 @@ class DownloadWorker(BaseWorker):
                         
                         result_file = os.path.join(self.output_path, os.path.basename(filename))
                     else:
-                        raise Exception("Не удалось получить информацию о видео")
+                        raise Exception(_("video_info_fetch_error"))
             except Exception as e:
-                self.error.emit(f"Ошибка при загрузке видео: {str(e)}")
+                self.error.emit(_("download_error").format(error=str(e)))
                 return
             
             if self.check_cancelled():
-                self.logger.info("Загрузка была отменена")
+                self.logger.info(_("download_cancelled"))
                 return
             
             if result_file and os.path.exists(result_file):
-                self.logger.info(f"Загрузка завершена успешно: {result_file}")
-                self.download_finished.emit(True, f"Загрузка завершена: {os.path.basename(result_file)}")
+                self.logger.info(_("download_completed").format(file=result_file))
+                self.download_finished.emit(True, _("download_finished_message").format(filename=os.path.basename(result_file)))
             else:
-                self.error.emit("Файл не был создан после загрузки")
+                self.error.emit(_("file_not_created_error"))
                 
         except ValueError as e:
-            self.handle_error(e, f"Ошибка валидации: {str(e)}")
+            self.handle_error(e, _("validation_error").format(error=str(e)))
         except PermissionError as e:
-            self.handle_error(e, f"Ошибка доступа: {str(e)}")
+            self.handle_error(e, _("permission_error").format(error=str(e)))
         except Exception as e:
             if not self.is_cancelled():
-                self.handle_error(e, f"Ошибка загрузки: {str(e)}")
+                self.handle_error(e, _("download_error").format(error=str(e)))
         finally:
             self._download_started = False
     
@@ -137,15 +137,15 @@ class DownloadWorker(BaseWorker):
                 # Принудительно останавливаем все активные загрузки
                 if hasattr(self._ydl_instance, '_download_retcode'):
                     self._ydl_instance._download_retcode = 1
-                self.logger.debug("Ресурсы yt-dlp очищены")
+                self.logger.debug(_("ydl_cleanup_success"))
             except Exception as e:
-                self.logger.warning(f"Ошибка при очистке yt-dlp: {e}")
+                self.logger.warning(_("ydl_cleanup_error").format(error=e))
             finally:
                 self._ydl_instance = None
     
     def terminate(self):
         """Переопределяем terminate для корректной остановки загрузки"""
-        self.logger.info("Принудительное завершение загрузки")
+        self.logger.info(_("force_terminate_download"))
         self._is_cancelled = True
         
         # Останавливаем yt-dlp если он активен
@@ -154,7 +154,7 @@ class DownloadWorker(BaseWorker):
                 if hasattr(self._ydl_instance, '_download_retcode'):
                     self._ydl_instance._download_retcode = 1
             except Exception as e:
-                self.logger.warning(f"Ошибка при остановке yt-dlp: {e}")
+                self.logger.warning(_("ydl_stop_error").format(error=e))
         
         super().terminate()
     
@@ -167,7 +167,7 @@ class DownloadWorker(BaseWorker):
         """Отменяет загрузку"""
         super().cancel()
         if self._download_started:
-            self.logger.info("Отмена загрузки по запросу пользователя")
+            self.logger.info(_("download_cancelled_by_user"))
 
 
 class VideoInfoWorker(BaseWorker):
@@ -802,7 +802,7 @@ class MainWindow(QMainWindow):
         # Обновляем UI
         self.fetch_info_button.setEnabled(False)
         self.start_loading_animation()
-        self.statusBar.showMessage("Получение информации о видео...")
+        self.statusBar.showMessage(_("getting_video_info"))
         
         # Запускаем worker
         self.video_info_worker.start()
@@ -818,15 +818,15 @@ class MainWindow(QMainWindow):
         self.stop_loading_animation()
         
         # Отображаем информацию о видео
-        title = video_info.get('title', 'Неизвестно')
-        author = video_info.get('uploader', 'Неизвестно')
+        title = video_info.get('title', _("unknown"))
+        author = video_info.get('uploader', _("unknown"))
         duration = video_info.get('duration', 0)
-        duration_str = f"{duration//60}:{duration%60:02d}" if duration else "Неизвестно"
+        duration_str = f"{duration//60}:{duration%60:02d}" if duration else _("unknown")
         
         # Обновляем метки с информацией о видео
-        self.video_title_label.setText(f"Название: {title}")
-        self.video_author_label.setText(f"Автор: {author}")
-        self.video_duration_label.setText(f"Длительность: {duration_str}")
+        self.video_title_label.setText(f"{_('video_title_prefix')}{title}")
+        self.video_author_label.setText(f"{_('video_author_prefix')}{author}")
+        self.video_duration_label.setText(f"{_('video_duration_prefix')}{duration_str}")
         
         # Заполняем выпадающий список форматов
         self.format_combo.clear()  # Очищаем список
@@ -844,20 +844,20 @@ class MainWindow(QMainWindow):
                 continue
             
             # Формат (расширение)
-            ext = format_info.get('ext', 'Неизвестно')
+            ext = format_info.get('ext', _("unknown"))
             
             # Разрешение
-            resolution = format_info.get('resolution', 'Неизвестно')
+            resolution = format_info.get('resolution', _("unknown"))
             
             # Размер
             filesize = format_info.get('filesize_approx', format_info.get('filesize', 0))
-            filesize_str = self.format_filesize(filesize) if filesize else 'Неизвестно'
+            filesize_str = self.format_filesize(filesize) if filesize else _("unknown")
             
             # ID формата
             format_id = format_info.get('format_id', '')
             
             # Создаем текст для отображения в выпадающем списке с информацией об аудиокодеке
-            display_text = f"{ext} - {resolution} ({filesize_str}) [аудио: {acodec}]"
+            display_text = f"{ext} - {resolution} ({filesize_str}) [{_('audio_codec_prefix')}{acodec}]"
             
             # Добавляем в выпадающий список
             self.format_combo.addItem(display_text)
@@ -878,7 +878,7 @@ class MainWindow(QMainWindow):
         self.download_button.setEnabled(False)
         
         # Показываем информацию о видео в статусной строке
-        self.statusBar.showMessage(f"Видео: {title[:50]} | Длительность: {duration_str}")
+        self.statusBar.showMessage(_("video_info_status").format(title=title[:50], duration_str=duration_str))
         
         self.logger.info(f"Информация о видео получена: {title}")
     
@@ -896,8 +896,8 @@ class MainWindow(QMainWindow):
         self.stop_loading_animation()
         
         # Показываем ошибку
-        QMessageBox.warning(self, "Ошибка", f"Не удалось получить информацию о видео:\n{error_message}")
-        self.statusBar.showMessage("Готов")
+        QMessageBox.warning(self, _("error_title"), _("video_info_error").format(error_message=error_message))
+        self.statusBar.showMessage(_("ready_status"))
         
         self.logger.error(f"Ошибка получения информации о видео: {error_message}")
     
@@ -913,18 +913,18 @@ class MainWindow(QMainWindow):
         # Очищаем выпадающий список форматов и деактивируем его
         if hasattr(self, 'format_combo'):
             self.format_combo.clear()
-            self.format_combo.addItem("Выберите формат после получения данных о видео")
+            self.format_combo.addItem(_("format_placeholder"))
             self.format_combo.setEnabled(False)
             self.formats_data = {}
         
         # Обновляем статусную строку
-        self.statusBar.showMessage(_("status_ready"))
+        self.statusBar.showMessage(_("ready_status"))
         
     def on_format_selection_changed(self):
         """Обработчик выбора формата в выпадающем списке"""
         # Активируем кнопку загрузки только если выбран формат (не дефолтный текст)
         current_text = self.format_combo.currentText()
-        is_valid_selection = (current_text != "Выберите формат после получения данных о видео" 
+        is_valid_selection = (current_text != _("format_placeholder") 
                              and current_text in self.formats_data)
         self.download_button.setEnabled(is_valid_selection)
     
@@ -968,17 +968,8 @@ class MainWindow(QMainWindow):
         """Показывает информационное сообщение о кодеках"""
         QMessageBox.information(
             self, 
-            "Информация о кодеках", 
-            """H.264 (AVC):
-• Широко поддерживается всеми устройствами
-• Хорошее соотношение качества и размера файла
-• Рекомендуется для максимальной совместимости
-
-AV1:
-• Новый кодек с лучшим сжатием
-• Лучшее качество при меньшем размере файла
-• Может не поддерживаться старыми устройствами
-• Рекомендуется для новых устройств и экономии места"""
+            _("codec_info_title"), 
+            _("codec_info_text")
         )
         
     def change_language(self, index):
@@ -1584,7 +1575,7 @@ AV1:
         self.loading_dots = (self.loading_dots + 1) % 4
         dots = "." * self.loading_dots
         spaces = " " * (3 - self.loading_dots)  # Добавляем пробелы для постоянной ширины
-        self.fetch_info_button.setText(f"Загрузка{dots}{spaces}")
+        self.fetch_info_button.setText(f"{_('loading_text')}{dots}{spaces}")
 
 
 class LanguageToggle(QWidget):

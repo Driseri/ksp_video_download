@@ -39,11 +39,11 @@ class ConversionWorker(BaseWorker):
             if self.check_cancelled():
                 return
                 
-            self.logger.info(f"Начало конвертации: {self.input_file} -> {self.output_file}")
+            self.logger.info(_("conversion_start_log").format(input_file=self.input_file, output_file=self.output_file))
             
             # Проверяем существование входного файла
             if not os.path.exists(self.input_file):
-                raise FileNotFoundError(f"Входной файл не найден: {self.input_file}")
+                raise FileNotFoundError(_("error_input_file_not_found").format(file=self.input_file))
             
             # Проверяем доступность выходной директории
             output_dir = os.path.dirname(self.output_file)
@@ -64,30 +64,30 @@ class ConversionWorker(BaseWorker):
                 return
             
             if success:
-                self.logger.info("Конвертация завершена успешно")
+                self.logger.info(_("conversion_success"))
                 self.processing_finished.emit(True, self.localization.get_text("conversion_complete_file").format(
                     filename=os.path.basename(self.output_file)
                 ))
             else:
-                self.logger.error("Конвертация завершилась неудачно")
-                self.error.emit(self.localization.get_text("conversion_failed"))
+                self.logger.error(_("conversion_failed"))
+                self.error.emit(_("conversion_failed"))
                 
         except FileNotFoundError as e:
             if not self._should_stop:
-                self.logger.error(f"Файл не найден: {str(e)}")
-                self.error.emit(f"Файл не найден: {str(e)}")
+                self.logger.error(_("file_not_found_error").format(error=str(e)))
+                self.error.emit(_("error_file_not_found").format(error=str(e)))
         except PermissionError as e:
             if not self._should_stop:
-                self.logger.error(f"Недостаточно прав доступа: {str(e)}")
-                self.error.emit(f"Недостаточно прав доступа: {str(e)}")
+                self.logger.error(_("access_denied_error").format(error=str(e)))
+                self.error.emit(_("error_permission_denied").format(error=str(e)))
         except RuntimeError as e:
             if not self._should_stop:
-                self.logger.error(f"Ошибка FFmpeg: {str(e)}")
-                self.error.emit(f"Ошибка конвертации: {str(e)}")
+                self.logger.error(_("ffmpeg_error").format(error=str(e)))
+                self.error.emit(_("error_conversion_failed").format(error=str(e)))
         except Exception as e:
             if not self._should_stop:
-                self.logger.error(f"Неожиданная ошибка конвертации: {str(e)}")
-                self.error.emit(f"Неожиданная ошибка: {str(e)}")
+                self.logger.error(_("unexpected_conversion_error").format(error=str(e)))
+                self.error.emit(_("error_unexpected").format(error=str(e)))
     
     def _cleanup_processor(self):
         """Очистка ресурсов FFmpegProcessor"""
@@ -95,9 +95,9 @@ class ConversionWorker(BaseWorker):
             try:
                 # Останавливаем все активные процессы FFmpeg
                 self.processor.terminate_all_processes()
-                self.logger.debug("Ресурсы FFmpegProcessor очищены")
+                self.logger.debug(_("ffmpeg_cleanup_success"))
             except Exception as e:
-                self.logger.warning(f"Ошибка при очистке FFmpegProcessor: {e}")
+                self.logger.warning(_("ffmpeg_cleanup_error").format(error=e))
             finally:
                 self.processor = None
 
@@ -185,7 +185,7 @@ class ConversionTab(QWidget):
                 background-color: #3d8b40;
             }
         """)
-        self.help_button.setToolTip("Справка по параметрам конвертации")
+        self.help_button.setToolTip(_("conversion_help_tooltip"))
         
         # Добавляем кнопку справки в правый угол заголовка группы
         conversion_group.setStyleSheet("""
@@ -401,7 +401,7 @@ class ConversionTab(QWidget):
                 self.help_button.clicked.connect(self.show_help_dialog)
                 
         except Exception as e:
-            self.logger.error(f"Ошибка при настройке соединений: {str(e)}")
+            self.logger.error(_("connection_setup_error").format(error=str(e)))
     
     def browse_source_file(self):
         """Выбор исходного файла"""
@@ -438,11 +438,11 @@ class ConversionTab(QWidget):
                 self.convert_button.setEnabled(True)
                 
         except Exception as e:
-            self.logger.error(f"Ошибка при выборе файла: {str(e)}")
+            self.logger.error(_("file_selection_error").format(error=str(e)))
             QMessageBox.critical(
                 self, 
                 self.localization.get_text("error"), 
-                f"Ошибка при выборе файла: {str(e)}"
+                _("error_file_selection").format(error=str(e))
             )
     
     def browse_save_directory(self):
@@ -477,11 +477,11 @@ class ConversionTab(QWidget):
                 self.update_output_filename()
                 
         except Exception as e:
-            self.logger.error(f"Ошибка при выборе директории: {str(e)}")
+            self.logger.error(_("directory_selection_error").format(error=str(e)))
             QMessageBox.critical(
                 self, 
                 self.localization.get_text("error"), 
-                f"Ошибка при выборе директории: {str(e)}"
+                _("error_directory_selection").format(error=str(e))
             )
     
     def update_file_info(self, file_path: str):
@@ -501,7 +501,7 @@ class ConversionTab(QWidget):
                 QMessageBox.information(
                     self,
                     self.localization.get_text("info"),
-                    f"Выбран большой файл ({file_size_mb:.1f} МБ). Конвертация может занять много времени."
+                    _("large_file_warning").format(size=file_size_mb)
                 )
             
             if self.processor.is_available():
@@ -513,12 +513,16 @@ class ConversionTab(QWidget):
                         duration = self._format_duration(self.file_info.get('duration', 0))
                         size = self._format_size(self.file_info.get('size', file_size))
                         
-                        info_lines = [f"Длительность: {duration} | Размер: {size}"]
+                        info_lines = [_("file_info_duration_size").format(duration=duration, size=size)]
                         
                         # Информация о видео
                         if self.file_info.get('video_streams'):
                             video = self.file_info['video_streams'][0]
-                            video_info = f"Видео: {video.get('codec', 'N/A')}, {video.get('width', 0)}x{video.get('height', 0)}"
+                            video_info = _("file_info_video").format(
+                                codec=video.get('codec', 'N/A'),
+                                width=video.get('width', 0),
+                                height=video.get('height', 0)
+                            )
                             if video.get('bitrate'):
                                 video_info += f", {self._format_bitrate(video['bitrate'])}"
                             info_lines.append(video_info)
@@ -526,28 +530,31 @@ class ConversionTab(QWidget):
                         # Информация об аудио
                         if self.file_info.get('audio_streams'):
                             audio = self.file_info['audio_streams'][0]
-                            audio_info = f"Аудио: {audio.get('codec', 'N/A')}, {audio.get('channels', 0)} каналов"
+                            audio_info = _("file_info_audio").format(
+                                codec=audio.get('codec', 'N/A'),
+                                channels=audio.get('channels', 0)
+                            )
                             if audio.get('bitrate'):
                                 audio_info += f", {self._format_bitrate(audio['bitrate'])}"
                             info_lines.append(audio_info)
                         
                         self.file_info_label.setText("\n".join(info_lines))
                     else:
-                        self.file_info_label.setText(f"Файл: {filename}\n(не удалось получить информацию)")
+                        self.file_info_label.setText(_("file_info_no_data").format(filename=filename))
                         
                 except Exception as ffmpeg_error:
-                    self.logger.warning(f"Ошибка анализа файла через ffmpeg: {str(ffmpeg_error)}")
-                    self.file_info_label.setText(f"Файл: {filename}\n(ошибка анализа ffmpeg)")
+                    self.logger.warning(_("ffmpeg_analysis_warning").format(error=str(ffmpeg_error)))
+                    self.file_info_label.setText(_("error_ffmpeg_analysis").format(filename=filename, error=str(ffmpeg_error)))
             else:
-                self.file_info_label.setText(f"Файл: {filename}\n(ffmpeg недоступен для анализа)")
+                self.file_info_label.setText(_("error_ffmpeg_unavailable").format(filename=filename))
                 
         except Exception as e:
-            self.logger.error(f"Ошибка получения информации о файле: {str(e)}")
+            self.logger.error(_("file_info_error").format(error=str(e)))
             try:
-                filename = os.path.basename(file_path) if file_path else "неизвестный файл"
+                filename = os.path.basename(file_path) if file_path else _("unknown_file")
             except:
-                filename = "неизвестный файл"
-            self.file_info_label.setText(f"Файл: {filename}\n(ошибка анализа)")
+                filename = _("unknown_file")
+            self.file_info_label.setText(_("error_file_analysis").format(filename=filename))
     
     def on_format_changed(self):
         """Обработка изменения выходного формата"""
@@ -649,7 +656,7 @@ class ConversionTab(QWidget):
             self.output_file = output_file
             
         except Exception as e:
-            self.logger.error(f"Ошибка при обновлении имени выходного файла: {str(e)}")
+            self.logger.error(_("output_filename_update_error").format(error=str(e)))
             self.output_file = None
     
     def start_conversion(self):
@@ -720,7 +727,7 @@ class ConversionTab(QWidget):
                 QMessageBox.warning(
                     self, 
                     self.localization.get_text("warning"), 
-                    "Выходной файл не может совпадать с исходным файлом"
+                    _("error_output_same_as_input")
                 )
                 return
             
@@ -729,7 +736,7 @@ class ConversionTab(QWidget):
                 reply = QMessageBox.question(
                     self,
                     self.localization.get_text("confirm"),
-                    f"Файл {os.path.basename(self.output_file)} уже существует. Перезаписать?",
+                    _("confirm_overwrite_file").format(filename=os.path.basename(self.output_file)),
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                     QMessageBox.StandardButton.No
                 )
@@ -774,11 +781,11 @@ class ConversionTab(QWidget):
             self.set_ui_enabled(False)
             
         except Exception as e:
-            self.logger.error(f"Ошибка при запуске конвертации: {str(e)}")
+            self.logger.error(_("conversion_start_error").format(error=str(e)))
             QMessageBox.critical(
                 self, 
                 self.localization.get_text("error"), 
-                f"Ошибка при запуске конвертации: {str(e)}"
+                _("error_conversion_start").format(error=str(e))
             )
     
     def on_progress_updated(self, progress: float, status: str):
@@ -827,7 +834,7 @@ class ConversionTab(QWidget):
                         combo.setEnabled(enabled)
                         
         except Exception as e:
-            self.logger.error(f"Ошибка при изменении состояния UI: {str(e)}")
+            self.logger.error(_("ui_state_change_error").format(error=str(e)))
     
     def show_ffmpeg_warning(self):
         """Показ предупреждения об отсутствии ffmpeg"""
@@ -840,23 +847,23 @@ class ConversionTab(QWidget):
     def _format_duration(self, seconds: float) -> str:
         """Форматирование длительности"""
         if seconds < 60:
-            return f"{int(seconds)}с"
+            return f"{int(seconds)}{_('duration_seconds_short')}"
         elif seconds < 3600:
             minutes = int(seconds // 60)
             secs = int(seconds % 60)
-            return f"{minutes}м {secs}с"
+            return f"{minutes}{_('duration_minutes_short')} {secs}{_('duration_seconds_short')}"
         else:
             hours = int(seconds // 3600)
             minutes = int((seconds % 3600) // 60)
-            return f"{hours}ч {minutes}м"
+            return f"{hours}{_('duration_hours_short')} {minutes}{_('duration_minutes_short')}"
     
     def _format_size(self, bytes_size: int) -> str:
         """Форматирование размера файла"""
-        for unit in ['Б', 'КБ', 'МБ', 'ГБ']:
+        for unit in [_('size_bytes'), _('size_kb'), _('size_mb'), _('size_gb')]:
             if bytes_size < 1024.0:
                 return f"{bytes_size:.1f} {unit}"
             bytes_size /= 1024.0
-        return f"{bytes_size:.1f} ТБ"
+        return f"{bytes_size:.1f} {_('size_tb')}"
     
     def _format_bitrate(self, bitrate: int) -> str:
         """Форматирование битрейта"""
@@ -868,7 +875,7 @@ class ConversionTab(QWidget):
     def show_help_dialog(self):
         """Показ диалогового окна с справкой по параметрам конвертации"""
         dialog = QDialog(self)
-        dialog.setWindowTitle("Справка по параметрам конвертации")
+        dialog.setWindowTitle(_("conversion_help_title"))
         dialog.setModal(True)
         dialog.resize(600, 500)
         
@@ -880,69 +887,7 @@ class ConversionTab(QWidget):
         scroll_layout = QVBoxLayout(scroll_widget)
         
         # Содержимое справки
-        help_content = """
-<h2>Справка по параметрам конвертации</h2>
-
-<h3>📁 Формат вывода</h3>
-<p><b>Что это:</b> Формат файла, в который будет конвертирован исходный файл.</p>
-<p><b>Когда использовать:</b></p>
-<ul>
-<li><b>MP4</b> - универсальный формат, подходит для большинства устройств и платформ</li>
-<li><b>AVI</b> - старый формат, хорошая совместимость со старыми программами</li>
-<li><b>MKV</b> - поддерживает множество дорожек, субтитры, высокое качество</li>
-<li><b>MOV</b> - формат Apple, лучше всего для устройств Mac/iOS</li>
-<li><b>WEBM</b> - оптимизирован для веб-воспроизведения</li>
-<li><b>MP3</b> - только аудио, универсальный формат для музыки</li>
-<li><b>FLAC</b> - только аудио, без потерь качества</li>
-</ul>
-
-<h3>🎬 Видеокодек</h3>
-<p><b>Что это:</b> Алгоритм сжатия видео.</p>
-<p><b>Когда использовать:</b></p>
-<ul>
-<li><b>H.264 (libx264)</b> - лучший баланс качества и размера, универсальная совместимость</li>
-<li><b>H.265 (libx265)</b> - лучшее сжатие, меньший размер файла, но требует больше ресурсов</li>
-<li><b>VP9</b> - открытый стандарт, хорош для веб-контента</li>
-<li><b>AV1</b> - новейший кодек, отличное сжатие, но медленная обработка</li>
-</ul>
-
-<h3>📐 Разрешение</h3>
-<p><b>Что это:</b> Размер видео в пикселях (ширина × высота).</p>
-<p><b>Когда использовать:</b></p>
-<ul>
-<li><b>Исходное</b> - сохранить оригинальное разрешение</li>
-<li><b>1920×1080 (Full HD)</b> - стандарт для большинства экранов</li>
-<li><b>1280×720 (HD)</b> - меньший размер файла, подходит для мобильных устройств</li>
-<li><b>3840×2160 (4K)</b> - высокое качество для больших экранов</li>
-</ul>
-
-<h3>📊 Видео битрейт</h3>
-<p><b>Что это:</b> Количество данных в секунду для видео. Выше = лучше качество, но больше размер файла.</p>
-<p><b>Рекомендации:</b></p>
-<ul>
-<li><b>1-3 Mbps</b> - для мобильных устройств, низкое качество</li>
-<li><b>5-10 Mbps</b> - хорошее качество для Full HD</li>
-<li><b>15-25 Mbps</b> - высокое качество для Full HD</li>
-<li><b>35-50 Mbps</b> - для 4K видео</li>
-</ul>
-
-<h3>🔊 Аудио битрейт</h3>
-<p><b>Что это:</b> Качество звука. Выше = лучше звук, но больше размер файла.</p>
-<p><b>Рекомендации:</b></p>
-<ul>
-<li><b>128 kbps</b> - приемлемое качество для речи</li>
-<li><b>192 kbps</b> - хорошее качество для музыки</li>
-<li><b>320 kbps</b> - высокое качество, близко к CD</li>
-</ul>
-
-<h3>💡 Общие советы</h3>
-<ul>
-<li>Для YouTube: MP4 + H.264 + 1080p + 8-12 Mbps</li>
-<li>Для мобильных: MP4 + H.264 + 720p + 3-5 Mbps</li>
-<li>Для архивирования: MKV + H.265 + исходное разрешение</li>
-<li>Для быстрой обработки: используйте аппаратное ускорение (если доступно)</li>
-</ul>
-        """
+        help_content = _("conversion_help_content")
         
         # Создаем текстовое поле с HTML-содержимым
         text_edit = QTextEdit()
@@ -956,7 +901,7 @@ class ConversionTab(QWidget):
         layout.addWidget(scroll_area)
         
         # Кнопка закрытия
-        close_button = QPushButton("Закрыть")
+        close_button = QPushButton(_("close_button"))
         close_button.clicked.connect(dialog.accept)
         close_button.setFixedHeight(30)
         
