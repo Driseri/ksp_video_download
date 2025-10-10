@@ -12,8 +12,8 @@ from PySide6.QtWidgets import (
     QTabWidget, QRadioButton, QButtonGroup, QFrame, QApplication, QSizePolicy,
     QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox
 )
-from PySide6.QtCore import Qt, QSize, Signal, Slot, QThread, QMimeData, QProcess, QPropertyAnimation, QEasingCurve, QRect, Property
-from PySide6.QtGui import QIcon, QPixmap, QDragEnterEvent, QDropEvent, QPainter, QColor, QPen
+from PySide6.QtCore import Qt, QSize, Signal, Slot, QThread, QMimeData, QProcess, QPropertyAnimation, QEasingCurve, QRect, Property, QTimer
+from PySide6.QtGui import QIcon, QPixmap, QDragEnterEvent, QDropEvent, QPainter, QColor, QPen, QMovie
 
 import json
 import re
@@ -256,6 +256,12 @@ class MainWindow(QMainWindow):
         self.video_info_fetched = False
         self.current_video_info = None
         self.formats_data = {}  # Инициализация словаря форматов
+        
+        # Инициализация анимации загрузки
+        self.loading_timer = QTimer()
+        self.loading_timer.timeout.connect(self.update_loading_animation)
+        self.loading_dots = 0
+        self.original_button_text = "Получить данные о видео"
         
         self.setWindowTitle(_("app_title"))
         self.setMinimumSize(QSize(600, 460))  # Увеличена высота на 15% (400 -> 460)
@@ -795,7 +801,7 @@ class MainWindow(QMainWindow):
         
         # Обновляем UI
         self.fetch_info_button.setEnabled(False)
-        self.fetch_info_button.setText("Получение данных...")
+        self.start_loading_animation()
         self.statusBar.showMessage("Получение информации о видео...")
         
         # Запускаем worker
@@ -809,7 +815,7 @@ class MainWindow(QMainWindow):
         
         # Обновляем UI
         self.fetch_info_button.setEnabled(True)
-        self.fetch_info_button.setText("Получить данные о видео")
+        self.stop_loading_animation()
         
         # Отображаем информацию о видео
         title = video_info.get('title', 'Неизвестно')
@@ -887,7 +893,7 @@ class MainWindow(QMainWindow):
         
         # Обновляем UI
         self.fetch_info_button.setEnabled(True)
-        self.fetch_info_button.setText("Получить данные о видео")
+        self.stop_loading_animation()
         
         # Показываем ошибку
         QMessageBox.warning(self, "Ошибка", f"Не удалось получить информацию о видео:\n{error_message}")
@@ -1562,6 +1568,23 @@ AV1:
                 self.logger.error(f"Ошибка при дополнительном завершении потока {thread_name}: {e}")
         
         self.logger.info("Завершение всех потоков завершено")
+
+    def start_loading_animation(self):
+        """Запускает анимацию загрузки на кнопке"""
+        self.loading_dots = 0
+        self.loading_timer.start(500)  # Обновление каждые 500мс
+        
+    def stop_loading_animation(self):
+        """Останавливает анимацию загрузки и восстанавливает текст кнопки"""
+        self.loading_timer.stop()
+        self.fetch_info_button.setText(self.original_button_text)
+        
+    def update_loading_animation(self):
+        """Обновляет анимацию загрузки (добавляет точки)"""
+        self.loading_dots = (self.loading_dots + 1) % 4
+        dots = "." * self.loading_dots
+        spaces = " " * (3 - self.loading_dots)  # Добавляем пробелы для постоянной ширины
+        self.fetch_info_button.setText(f"Загрузка{dots}{spaces}")
 
 
 class LanguageToggle(QWidget):
